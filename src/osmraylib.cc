@@ -16,7 +16,7 @@ const double LONG_B = 2.26037;
 const double LAT_B  = 48.61511;
 
 int main(void) {
-  InitWindow(800, 600, "ZIZIMAP");
+  InitWindow(1000, 1000, "ZIZIMAP");
   SetTargetFPS(60);
   DisableCursor();
 
@@ -27,8 +27,11 @@ int main(void) {
   println("Num nodes: {}", md.nodes.size());
   println("Num ways: {}", md.ways.size());
 
-  auto building_ways = md.ways | ranges::views::filter([](const Way& w){ return w.is_building(); });
-  vector<TransformedMesh> meshes = earcut_collection(std::move(building_ways));
+  vector<EarcutMesh> meshes = [&md]() {
+    auto building_ways = md.ways | ranges::views::filter([](const Way& w){ return w.is_building(); });
+    vector<EarcutResult> earcuts = earcut_collection(std::move(building_ways));
+    return build_and_upload_meshes(earcuts);
+  }();
 
   auto road_ways_view = md.ways | ranges::views::filter([](const Way& w) { return w.is_highway(); });
   vector<Way> road_ways(road_ways_view.begin(), road_ways_view.end());
@@ -50,10 +53,10 @@ int main(void) {
       ClearBackground(RAYWHITE);
 
       BeginMode3D(camera);
-        for (const TransformedMesh& m : meshes) {
-          Vector2 mesh_pos = Vector2Subtract(m.first, world_origin);
+        for (const EarcutMesh& m : meshes) {
+          Vector2 mesh_pos = Vector2Subtract(m.world_offset, world_origin);
           Matrix transform = MatrixTranslate(mesh_pos.x, 0.f, mesh_pos.y);
-          DrawMesh(m.second, mat, transform);
+          DrawMesh(m.mesh, mat, transform);
         }
 
         for (const Way& w : road_ways) {
