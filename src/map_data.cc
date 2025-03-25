@@ -39,7 +39,7 @@ bool Way::is_highway() const noexcept {
 }
 
 Vector2 to2DCoords(double lon, double lat) {
-  const float scale = 1000.f;
+  const float scale = 10000.f;
   return Vector2 {
     .x = (float)(lat*scale),
     .y = (float)(lon*scale*cos(lat*M_PI/180.f)),

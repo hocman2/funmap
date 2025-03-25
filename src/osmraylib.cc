@@ -1,6 +1,7 @@
 #include "raylib.h"
 #include "rlgl.h"
 #include "raymath.h"
+#include "rcamera.h"
 #include <print>
 #include <iostream>
 #include <cmath>
@@ -9,11 +10,40 @@
 #include "earcut.hpp"
 
 using namespace std;
+namespace views = ranges::views;
 
 const double LONG_A = 2.25797;
 const double LAT_A  = 48.61416;
 const double LONG_B = 2.26037;
 const double LAT_B  = 48.61511;
+
+Material initialize_mat() {
+  Shader shader = LoadShader("resources/shaders/flat_shade.vs", "resources/shaders/flat_shade.fs");
+
+  Material mat = Material {
+    .shader = shader,
+    .maps = (MaterialMap*)RL_CALLOC(12, sizeof(MaterialMap)),
+  };
+  mat.maps[MATERIAL_MAP_ALBEDO].color = DARKPURPLE;
+
+  mat.shader.locs[SHADER_LOC_MATRIX_VIEW] = GetShaderLocation(mat.shader, "matView");
+  mat.shader.locs[SHADER_LOC_MATRIX_PROJECTION] = GetShaderLocation(mat.shader, "matProjection");
+  mat.shader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(mat.shader, "matModel");
+  mat.shader.locs[SHADER_LOC_MATRIX_NORMAL] = GetShaderLocation(mat.shader, "matNormal");
+
+  mat.shader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(mat.shader, "viewPos");
+  mat.shader.locs[SHADER_LOC_MAP_ALBEDO] = GetShaderLocation(mat.shader, "albedoColor");
+
+  Vector4 albedo_norm = ColorNormalize(mat.maps[MATERIAL_MAP_ALBEDO].color);
+  SetShaderValue(
+    mat.shader, 
+    mat.shader.locs[SHADER_LOC_MAP_ALBEDO], 
+    &albedo_norm,
+    SHADER_UNIFORM_VEC4
+  );
+
+  return mat;
+}
 
 int main(void) {
   InitWindow(1000, 1000, "ZIZIMAP");
@@ -27,14 +57,17 @@ int main(void) {
   println("Num nodes: {}", md.nodes.size());
   println("Num ways: {}", md.ways.size());
 
+  // because it might not be immediatly clear,
+  // this expression selects buildings, earcuts each one into a list of triangles
+  // then meshes are generated from these triangles
   vector<EarcutMesh> meshes = [&md]() {
-    auto building_ways = md.ways | ranges::views::filter([](const Way& w){ return w.is_building(); });
-    vector<EarcutResult> earcuts = earcut_collection(std::move(building_ways));
+    auto buildings = md.ways | views::filter([](const Way& w){ return w.is_building(); });
+    vector<EarcutResult> earcuts = earcut_collection(std::move(buildings));
     return build_and_upload_meshes(earcuts);
   }();
 
-  auto road_ways_view = md.ways | ranges::views::filter([](const Way& w) { return w.is_highway(); });
-  vector<Way> road_ways(road_ways_view.begin(), road_ways_view.end());
+  auto roads_view = md.ways | views::filter([](const Way& w) { return w.is_highway(); });
+  vector<Way> roads(roads_view.begin(), roads_view.end());
 
   Camera3D camera = { 
     .position = { 0.0f, 10.0f, 10.0f }, 
@@ -44,10 +77,13 @@ int main(void) {
     .projection = CAMERA_PERSPECTIVE
   };
 
-  Material mat = LoadMaterialDefault();
-  mat.maps[0].color = RED;
+  Material mat = initialize_mat();
+
   while(!WindowShouldClose()) {
     UpdateCamera(&camera, CAMERA_FREE);
+
+    float cameraPos[3] = {camera.position.x, camera.position.y, camera.position.z};
+    SetShaderValue(mat.shader, mat.shader.locs[SHADER_LOC_VECTOR_VIEW], cameraPos, SHADER_UNIFORM_VEC3);
 
     BeginDrawing();
       ClearBackground(RAYWHITE);
@@ -59,7 +95,7 @@ int main(void) {
           DrawMesh(m.mesh, mat, transform);
         }
 
-        for (const Way& w : road_ways) {
+        for (const Way& w : roads) {
           if (w.nodes.size() < 2) continue;
           Vector2 pv = Vector2Subtract(to2DCoords(w.nodes[0]->longitude, w.nodes[0]->latitude), world_origin);
           for (size_t i = 1; i < w.nodes.size(); ++i) {
@@ -68,6 +104,7 @@ int main(void) {
             pv = end;
           }
         }
+        DrawSphere(Vector3Zero(), .5f, RED);
         DrawGrid(10, 1.f);
       EndMode3D();
     EndDrawing();

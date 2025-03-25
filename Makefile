@@ -1,14 +1,14 @@
 CC := clang
 CXXFLAGS := -std=c++23 -Wall -Wextra -Wno-missing-field-initializers -O0 -g
 FRAMEWORKS := -framework Cocoa -framework IOKit -framework OpenGL 
-INCLUDE_DIRS := -I./include -I./raylib-5.5_macos/include 
+INCLUDE_DIRS := -I./include -I./raylib/build/raylib/include 
 
 SRCS = src/osmraylib.cc src/map_data.cc src/earcut.cc src/tinyxml2.cpp
 INCS = include/map_data.hpp include/earcut.hpp
 OBJS = obj/osmraylib.o obj/map_data.o obj/earcut.o obj/tinyxml2.o
 
 osmraylib: $(OBJS)
-	$(CC) $(CXXFLAGS) -lc++ -lcurl $(FRAMEWORKS) ./raylib-5.5_macos/lib/libraylib.a $(OBJS) -o osmraylib
+	$(CC) $(CXXFLAGS) -lc++ -lcurl $(FRAMEWORKS) ./raylib/build/raylib/libraylib.a $(OBJS) -o osmraylib
 
 obj/osmraylib.o: $(SRCS) $(INCS)
 	$(CC) $(CXXFLAGS) $(INCLUDE_DIRS) -c src/osmraylib.cc -o obj/osmraylib.o

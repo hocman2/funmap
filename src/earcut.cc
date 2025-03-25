@@ -14,6 +14,7 @@ namespace views = ranges::views;
 EarcutResult earcut_single(const Way& w) {
   assert(w.nodes.size() >= 3 && "Unimplemented: handle case when building has less than 3 nodes (weird)");
   const size_t LIST_NODES_BUFFER_SZ = 64;
+  const float BUILDING_ELEVATION = 0.5f;
   struct ListNode {
     Vector2 data;
     bool is_convex;
@@ -77,7 +78,28 @@ EarcutResult earcut_single(const Way& w) {
     update_convex(vertex);
 
   vector<Triangle> triangles;
-  triangles.reserve(num_verts-2);
+  triangles.reserve(2*num_verts-2);
+
+  // before performing the actual earcut, we'll generate side faces (walls)
+  // we are doing that before earcutting because the process messes up the linked list
+  ListNode* vi = vert_head;
+  do {
+    triangles.push_back({
+      Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
+      Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
+      Vector3 { .x = vi->data.x,      .y = BUILDING_ELEVATION, .z = vi->data.y },
+    });
+
+    triangles.push_back({
+      Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
+      Vector3 { .x = vi->nx->data.x,  .y = 0.f               , .z = vi->nx->data.y },
+      Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
+    });
+
+    vi = vi->nx;
+  } while (vi != vert_head);
+
+  // actual earcutting
   int remaining_verts = num_verts;
   for (ListNode* vertex = vert_head; remaining_verts > 3; vertex = vertex->nx) {
     Vector2 vi = vertex->data;
@@ -102,9 +124,9 @@ EarcutResult earcut_single(const Way& w) {
     }
 
     triangles.push_back({
-      Vector3 { .x = vp.x, .y = 0.f, .z = vp.y }, 
-      Vector3 { .x = vi.x, .y = 0.f, .z = vi.y }, 
-      Vector3 { .x = vn.x, .y = 0.f, .z = vn.y }
+      Vector3 { .x = vp.x, .y = BUILDING_ELEVATION, .z = vp.y }, 
+      Vector3 { .x = vi.x, .y = BUILDING_ELEVATION, .z = vi.y }, 
+      Vector3 { .x = vn.x, .y = BUILDING_ELEVATION, .z = vn.y }
     });
     vertex->pv->nx = vertex->nx;
     vertex->nx->pv = vertex->pv;
@@ -121,27 +143,12 @@ EarcutResult earcut_single(const Way& w) {
     update_convex(vertex->nx);
   }
 
+  // push the remaining triangle
   triangles.push_back({
-    Vector3 { .x = vert_head->pv->data.x, .y = 0.f,   .z = vert_head->pv->data.y  }, 
-    Vector3 { .x = vert_head->data.x,     .y = 0.f,   .z = vert_head->data.y      }, 
-    Vector3 { .x = vert_head->nx->data.x, .y = 0.f,   .z = vert_head->nx->data.y  },
+    Vector3 { .x = vert_head->pv->data.x, .y = BUILDING_ELEVATION, .z = vert_head->pv->data.y  }, 
+    Vector3 { .x = vert_head->data.x,     .y = BUILDING_ELEVATION, .z = vert_head->data.y      }, 
+    Vector3 { .x = vert_head->nx->data.x, .y = BUILDING_ELEVATION, .z = vert_head->nx->data.y  },
   });
-
-  // at that point we have all the triangles that make up our initial shape
-  // we are going to duplicate and offset these triangles by some arbitrary height to create some volume
-  auto inverted_offset_tris = triangles | views::transform([](const Triangle& t) -> Triangle { 
-    // inverting winding order as well
-    Vector3 v0 = get<0>(t);
-    Vector3 v1 = get<1>(t);
-    Vector3 v2 = get<2>(t);
-    v0.y = 0.05f;
-    v1.y = 0.05f;
-    v2.y = 0.05f;
-    return {v0, v1, v2}; 
-  });
-  triangles.insert(triangles.end(), inverted_offset_tris.begin(), inverted_offset_tris.end());
-
-  // final step is to connect the two duplicated faces with side faces
 
   return EarcutResult { 
     .triangles = triangles,
@@ -156,6 +163,7 @@ vector<EarcutMesh> build_and_upload_meshes(const vector<EarcutResult>& earcuts) 
     mesh.vertexCount = num_tris * 3;
     mesh.triangleCount = num_tris;
     mesh.vertices = (float*)RL_MALLOC(mesh.vertexCount*3*sizeof(float));
+    mesh.normals = (float*)RL_MALLOC(mesh.vertexCount*3*sizeof(float));
 
     for (int i = 0; i < mesh.triangleCount; ++i) {
       const Triangle& tri = earcut.triangles[i];
@@ -174,6 +182,20 @@ vector<EarcutMesh> build_and_upload_meshes(const vector<EarcutResult>& earcuts) 
       mesh.vertices[i*9+6] = v3.x;
       mesh.vertices[i*9+7] = v3.y;
       mesh.vertices[i*9+8] = v3.z;
+
+      Vector3 normal = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(v2, v1), Vector3Subtract(v3, v1)));
+
+      mesh.normals[i*9+0] = normal.x;
+      mesh.normals[i*9+1] = normal.y;
+      mesh.normals[i*9+2] = normal.z;
+
+      mesh.normals[i*9+3] = normal.x;
+      mesh.normals[i*9+4] = normal.y;
+      mesh.normals[i*9+5] = normal.z;
+
+      mesh.normals[i*9+6] = normal.x;
+      mesh.normals[i*9+7] = normal.y;
+      mesh.normals[i*9+8] = normal.z;
     }
 
     UploadMesh(&mesh, false);
