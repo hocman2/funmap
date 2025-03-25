@@ -57,7 +57,7 @@ EarcutResult earcut_single(const Way& w) {
     ListNode* vertex_nx = vertex->nx;
     double_signed_area += (vertex->data.x * vertex_nx->data.y - vertex_nx->data.x * vertex->data.y);
   }
-  bool winding_clockwise = double_signed_area < 0;
+  bool winding_clockwise = double_signed_area > 0;
 
   // keep track of convex vertices
   auto update_convex = [&winding_clockwise](ListNode* vertex) {
@@ -84,20 +84,48 @@ EarcutResult earcut_single(const Way& w) {
   // we are doing that before earcutting because the process messes up the linked list
   ListNode* vi = vert_head;
   do {
-    triangles.push_back({
-      Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
-      Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
-      Vector3 { .x = vi->data.x,      .y = BUILDING_ELEVATION, .z = vi->data.y },
-    });
-
-    triangles.push_back({
-      Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
-      Vector3 { .x = vi->nx->data.x,  .y = 0.f               , .z = vi->nx->data.y },
-      Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
-    });
+    if (winding_clockwise) {
+      triangles.push_back({
+        Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
+        Vector3 { .x = vi->data.x,      .y = BUILDING_ELEVATION, .z = vi->data.y },
+        Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
+      });
+      triangles.push_back({
+        Vector3 { .x = vi->nx->data.x,  .y = 0.f               , .z = vi->nx->data.y },
+        Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
+        Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
+      });
+    } else {
+      triangles.push_back({
+        Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
+        Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
+        Vector3 { .x = vi->data.x,      .y = BUILDING_ELEVATION, .z = vi->data.y },
+      });
+      triangles.push_back({
+        Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
+        Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
+        Vector3 { .x = vi->nx->data.x,  .y = 0.f               , .z = vi->nx->data.y },
+      });
+    }
 
     vi = vi->nx;
   } while (vi != vert_head);
+
+  auto push_triangle = [&triangles, &winding_clockwise, &BUILDING_ELEVATION](Vector2& a, Vector2& b, Vector2& c) {
+    if (winding_clockwise) {
+      triangles.push_back({
+        Vector3 { .x = a.x, .y = BUILDING_ELEVATION, .z = a.y },
+        Vector3 { .x = c.x, .y = BUILDING_ELEVATION, .z = c.y },
+        Vector3 { .x = b.x, .y = BUILDING_ELEVATION, .z = b.y },
+      });
+    } else {
+      triangles.push_back({
+        Vector3 { .x = a.x, .y = BUILDING_ELEVATION, .z = a.y },
+        Vector3 { .x = b.x, .y = BUILDING_ELEVATION, .z = b.y },
+        Vector3 { .x = c.x, .y = BUILDING_ELEVATION, .z = c.y },
+      });
+    }
+  };
 
   // actual earcutting
   int remaining_verts = num_verts;
@@ -123,11 +151,8 @@ EarcutResult earcut_single(const Way& w) {
       else continue;
     }
 
-    triangles.push_back({
-      Vector3 { .x = vp.x, .y = BUILDING_ELEVATION, .z = vp.y }, 
-      Vector3 { .x = vi.x, .y = BUILDING_ELEVATION, .z = vi.y }, 
-      Vector3 { .x = vn.x, .y = BUILDING_ELEVATION, .z = vn.y }
-    });
+    push_triangle(vp, vi, vn);
+
     vertex->pv->nx = vertex->nx;
     vertex->nx->pv = vertex->pv;
     --remaining_verts;
@@ -144,11 +169,7 @@ EarcutResult earcut_single(const Way& w) {
   }
 
   // push the remaining triangle
-  triangles.push_back({
-    Vector3 { .x = vert_head->pv->data.x, .y = BUILDING_ELEVATION, .z = vert_head->pv->data.y  }, 
-    Vector3 { .x = vert_head->data.x,     .y = BUILDING_ELEVATION, .z = vert_head->data.y      }, 
-    Vector3 { .x = vert_head->nx->data.x, .y = BUILDING_ELEVATION, .z = vert_head->nx->data.y  },
-  });
+  push_triangle(vert_head->pv->data, vert_head->data, vert_head->nx->data);
 
   return EarcutResult { 
     .triangles = triangles,
