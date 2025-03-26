@@ -11,15 +11,19 @@
 using namespace tinyxml2;
 using namespace std;
 
-Tag Tag::make_valueless(const MapData& md, const char* key) noexcept { 
+unordered_set<string> MapData::tag_keys;
+unordered_set<string> MapData::tag_values;
+
+Tag Tag::make_valueless(const char* key) noexcept { 
+  // this shit will break if tag_keys isn't found !! idc this whole function is trash anyway !
   return {
-    .key = std::string_view(*(md.tag_keys.find(key))), 
+    .key = std::string_view(*(MapData::tag_keys.find(key))), 
     .value = std::string_view("")
   }; 
 }
 
 bool Way::is_building() const noexcept {
-  Tag valueless_building = Tag::make_valueless(*(this->md), "building");
+  Tag valueless_building = Tag::make_valueless("building");
   auto building_tag = this->tags.find(valueless_building);
   if (building_tag == this->tags.end())
     return false;
@@ -30,7 +34,7 @@ bool Way::is_building() const noexcept {
 }
 
 bool Way::is_highway() const noexcept {
-  Tag valueless_highway = Tag::make_valueless(*(this->md), "highway");
+  Tag valueless_highway = Tag::make_valueless("highway");
   auto highway_tag = this->tags.find(valueless_highway);
   if (highway_tag == this->tags.end())
     return false;
@@ -85,26 +89,25 @@ void fetch_and_parse(MapData* md, double longA, double latA, double longB, doubl
     } else if (strcmp(elem->Name(), "way") == 0) {
       Way w;
       w.id = elem->Unsigned64Attribute("id");
-      w.md = md;
       for (XMLElement* c = elem->FirstChildElement(); c != elem->LastChildElement(); c = c->NextSiblingElement()) {
         if (strcmp(c->Name(), "nd") == 0) {
           const Node& nr = (*(md->nodes.find(c->Unsigned64Attribute("ref")))).second;
-          w.nodes.push_back(&nr);
+          w.nodes.push_back(nr);
         } else if (strcmp(c->Name(), "tag") == 0) {
           Tag t;
           const char* keyVal = c->FindAttribute("k")->Value();
           string key(keyVal);
-          if (!md->tag_keys.contains(key)) {
+          if (!MapData::tag_keys.contains(key)) {
             md->tag_keys.insert(key);
           }
-          t.key = string_view(*(md->tag_keys.find(key)));
+          t.key = string_view(*(MapData::tag_keys.find(key)));
 
           const char* valVal = c->FindAttribute("v")->Value();
           string val(valVal);
-          if (!md->tag_values.contains(val)) {
+          if (!MapData::tag_values.contains(val)) {
             md->tag_values.insert(val);
           }
-          t.value = string_view(*(md->tag_values.find(val)));
+          t.value = string_view(*(MapData::tag_values.find(val)));
 
           w.tags.insert(t);
         } else {

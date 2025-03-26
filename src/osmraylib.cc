@@ -6,11 +6,12 @@
 #include <iostream>
 #include <cmath>
 #include <ranges>
+#include <future>
 #include "map_data.hpp"
+#include "worker_map_build.hpp"
 #include "earcut.hpp"
 
 using namespace std;
-namespace views = ranges::views;
 
 const double LONG_A = 2.25797;
 const double LAT_A  = 48.61416;
@@ -45,29 +46,14 @@ Material initialize_mat() {
   return mat;
 }
 
-int main(void) {
+int main() {
   InitWindow(1000, 1000, "ZIZIMAP");
   SetTargetFPS(60);
   DisableCursor();
-
-  MapData md;
-  fetch_and_parse(&md, LONG_A, LAT_A, LONG_B, LAT_B);
   Vector2 world_origin = to2DCoords(LONG_A, LAT_A);
 
-  println("Num nodes: {}", md.nodes.size());
-  println("Num ways: {}", md.ways.size());
-
-  // because it might not be immediatly clear,
-  // this expression selects buildings, earcuts each one into a list of triangles
-  // then meshes are generated from these triangles
-  vector<EarcutMesh> meshes = [&md]() {
-    auto buildings = md.ways | views::filter([](const Way& w){ return w.is_building(); });
-    vector<EarcutResult> earcuts = earcut_collection(std::move(buildings));
-    return build_and_upload_meshes(earcuts);
-  }();
-
-  auto roads_view = md.ways | views::filter([](const Way& w) { return w.is_highway(); });
-  vector<Way> roads(roads_view.begin(), roads_view.end());
+  WorkerMapBuild build_worker;
+  build_worker.run_idling();
 
   Camera3D camera = { 
     .position = { 0.0f, 10.0f, 10.0f }, 
@@ -78,9 +64,38 @@ int main(void) {
   };
 
   Material mat = initialize_mat();
+  vector<EarcutMesh> meshes;
+  vector<Way> roads;
 
+  future<WorkerMapBuildJobResult> map_build_job_future;
   while(!WindowShouldClose()) {
     UpdateCamera(&camera, CAMERA_FREE);
+
+    // new results came in from the map build worker
+    if (map_build_job_future.valid()) {
+      WorkerMapBuildJobResult res = map_build_job_future.get();
+
+      // first off, meshes must be uploaded to the opengl context, can only be done on the main thread
+      for (EarcutMesh& m : res.meshes) {
+        UploadMesh(&m.mesh, false);
+      }
+
+      meshes = res.meshes;
+      roads = res.roads;
+    } 
+    
+    if (IsKeyDown(KEY_R)) {
+      WorkerMapBuildJobParams params;
+      params.longA = LONG_A;
+      params.latA = LAT_A;
+      params.longB = LONG_B;
+      params.latB = LAT_B;
+      params.promise = promise<WorkerMapBuildJobResult>();
+
+      map_build_job_future = params.promise.get_future();
+
+      build_worker.start_job(std::move(params));
+    }
 
     float cameraPos[3] = {camera.position.x, camera.position.y, camera.position.z};
     SetShaderValue(mat.shader, mat.shader.locs[SHADER_LOC_VECTOR_VIEW], cameraPos, SHADER_UNIFORM_VEC3);
@@ -97,9 +112,9 @@ int main(void) {
 
         for (const Way& w : roads) {
           if (w.nodes.size() < 2) continue;
-          Vector2 pv = Vector2Subtract(to2DCoords(w.nodes[0]->longitude, w.nodes[0]->latitude), world_origin);
+          Vector2 pv = Vector2Subtract(to2DCoords(w.nodes[0].longitude, w.nodes[0].latitude), world_origin);
           for (size_t i = 1; i < w.nodes.size(); ++i) {
-            Vector2 end = Vector2Subtract(to2DCoords(w.nodes[i]->longitude, w.nodes[i]->latitude), world_origin);
+            Vector2 end = Vector2Subtract(to2DCoords(w.nodes[i].longitude, w.nodes[i].latitude), world_origin);
             DrawLine3D(Vector3 {pv.x, 0.f, pv.y}, Vector3 {end.x, 0.f, end.y}, BLUE);
             pv = end;
           }
@@ -109,7 +124,8 @@ int main(void) {
       EndMode3D();
     EndDrawing();
   }
-  
+
+  build_worker.end(); 
   UnloadMaterial(mat);
   CloseWindow();
   return 0;

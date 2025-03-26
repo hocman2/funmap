@@ -22,12 +22,12 @@ EarcutResult earcut_single(const Way& w) {
     ListNode* pv;
   };
 
-  Vector2 origin = to2DCoords(w.nodes[0]->longitude, w.nodes[0]->latitude);
+  Vector2 origin = to2DCoords(w.nodes[0].longitude, w.nodes[0].latitude);
 
   // simply transform node coordinates into Vector2s w/ origin being the first node's coordinates
   auto verts_range = w.nodes 
     | views::take(w.nodes.size()-1)  // skip last node as it's == to the first one
-    | views::transform([&origin](const Node* n) -> Vector2 { return Vector2Subtract(to2DCoords(n->longitude, n->latitude), origin); });
+    | views::transform([&origin](const Node& n) -> Vector2 { return Vector2Subtract(to2DCoords(n.longitude, n.latitude), origin); });
 
   // storing vertices data as a doubly linked list
   ListNode vertices_buffer[LIST_NODES_BUFFER_SZ];
@@ -177,7 +177,7 @@ EarcutResult earcut_single(const Way& w) {
   };
 }
 
-vector<EarcutMesh> build_and_upload_meshes(const vector<EarcutResult>& earcuts) {
+vector<EarcutMesh> build_meshes(const vector<EarcutResult>& earcuts) {
   auto build_and_upload_single = [](const EarcutResult& earcut) -> EarcutMesh {
     Mesh mesh {0};
     size_t num_tris = earcut.triangles.size();
@@ -219,7 +219,6 @@ vector<EarcutMesh> build_and_upload_meshes(const vector<EarcutResult>& earcuts) 
       mesh.normals[i*9+8] = normal.z;
     }
 
-    UploadMesh(&mesh, false);
     return EarcutMesh {
       .mesh = mesh,
       .world_offset = earcut.world_offset,

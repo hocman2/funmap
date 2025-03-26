@@ -32,4 +32,4 @@ std::vector<EarcutResult> earcut_collection(WayFilterView<Pred>&& buildings) {
   return earcuts;
 }
 
-std::vector<EarcutMesh> build_and_upload_meshes(const std::vector<EarcutResult>& earcuts);
+std::vector<EarcutMesh> build_meshes(const std::vector<EarcutResult>& earcuts);
