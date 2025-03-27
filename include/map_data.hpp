@@ -20,7 +20,6 @@ struct Tag {
 
   // forced to implement this like that, it's used to find tags by key when using map::find or set::find. maybe the stl allows us to use a custom compare fn ? too lazy to check
   bool operator==(const Tag& other) const noexcept { return key == other.key; }
-private:
   static Tag make_valueless(const char* key) noexcept;
 };
 

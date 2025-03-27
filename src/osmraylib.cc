@@ -17,6 +17,8 @@ const double LONG_A = 2.25797;
 const double LAT_A  = 48.61416;
 const double LONG_B = 2.26037;
 const double LAT_B  = 48.61511;
+const double LONG_DELTA = LONG_B - LONG_A;
+const double LAT_DELTA = LAT_B - LAT_A;
 
 Material initialize_mat() {
   Shader shader = LoadShader("resources/shaders/flat_shade.vs", "resources/shaders/flat_shade.fs");
@@ -63,6 +65,11 @@ int main() {
     .projection = CAMERA_PERSPECTIVE
   };
 
+  double longA = LONG_A;
+  double longB = LONG_B;
+  double latA = LAT_A;
+  double latB = LAT_B;
+
   Material mat = initialize_mat();
   vector<EarcutMesh> meshes;
   vector<Way> roads;
@@ -72,7 +79,10 @@ int main() {
     UpdateCamera(&camera, CAMERA_FREE);
 
     // new results came in from the map build worker
-    if (map_build_job_future.valid()) {
+    if (
+      map_build_job_future.valid() &&
+      map_build_job_future.wait_for(0ms) == future_status::ready
+    ) {
       WorkerMapBuildJobResult res = map_build_job_future.get();
 
       // first off, meshes must be uploaded to the opengl context, can only be done on the main thread
@@ -80,16 +90,21 @@ int main() {
         UploadMesh(&m.mesh, false);
       }
 
-      meshes = res.meshes;
-      roads = res.roads;
+      meshes.insert_range(meshes.end(), res.meshes);
+      roads.insert_range(roads.end(), res.roads);
+
+      longA = longB;
+      longB = longB + LONG_DELTA;
+      latA = latB;
+      latB = latB + LAT_DELTA;
     } 
     
-    if (IsKeyDown(KEY_R)) {
+    if (IsKeyPressed(KEY_R)) {
       WorkerMapBuildJobParams params;
-      params.longA = LONG_A;
-      params.latA = LAT_A;
-      params.longB = LONG_B;
-      params.latB = LAT_B;
+      params.longA = longA;
+      params.latA = latA;
+      params.longB = longB;
+      params.latB = latB;
       params.promise = promise<WorkerMapBuildJobResult>();
 
       map_build_job_future = params.promise.get_future();
