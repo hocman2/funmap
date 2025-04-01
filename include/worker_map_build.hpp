@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <vector>
 #include <future>
+#include <optional>
 #include "map_data.hpp"
 #include "earcut.hpp"
 
@@ -24,25 +25,23 @@ struct WorkerMapBuildJobParams {
 
 class WorkerMapBuild {
 public:
-  WorkerMapBuild();
-  WorkerMapBuild& operator=(const WorkerMapBuild&) = delete;
-  WorkerMapBuild& operator=(WorkerMapBuild&&) = delete;
-  WorkerMapBuild(const WorkerMapBuild&) = delete;
-  WorkerMapBuild(WorkerMapBuild&&) = delete;
-
-  void run_idling(); 
+  WorkerMapBuild() = default;
+  ~WorkerMapBuild();
+  void start_idling();
   void start_job(WorkerMapBuildJobParams&& params);
   void end();
 private:
-  WorkerMapBuildJobParams t_params;
+  struct M {
+    std::optional<WorkerMapBuildJobParams> job_params = std::nullopt;
 
-  // job scheduling
-  bool t_start_job;
-  bool t_close;
-  std::thread t_thr;
-  std::mutex t_mutex;
-  std::condition_variable t_job_cond;
+    // job scheduling flags
+    bool should_stop = false;
 
+    // Parallel computing stuff
+    std::thread thr = {};
+    std::mutex mutex = {};
+    std::condition_variable job_cond = {};
+  } m;
 private:
   void idle_job();
   void job();

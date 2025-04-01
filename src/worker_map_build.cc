@@ -1,3 +1,4 @@
+#include <cassert>
 #include <ranges>
 #include <thread>
 #include <mutex>
@@ -13,35 +14,36 @@
 using namespace std;
 namespace views = ranges::views;
 
-WorkerMapBuild::WorkerMapBuild():
-  t_start_job(false), t_close(false) {}
+WorkerMapBuild::~WorkerMapBuild() {
+  end();
+}
 
-void WorkerMapBuild::run_idling() {
-  t_thr = thread(&WorkerMapBuild::idle_job, this);
+void WorkerMapBuild::start_idling() {
+  assert(!m.thr.joinable() && "Called start_idling() twice on WorkerMapBuild");
+  m.thr = thread(&WorkerMapBuild::idle_job, this);
 }
 
 void WorkerMapBuild::idle_job() {
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Started, waiting for job start");
   while (true) {
-    unique_lock lock(t_mutex);   
-    t_job_cond.wait(lock, [this]() { return t_start_job || t_close; });
-    if (t_close) return;
+    unique_lock lock(m.mutex);   
+    m.job_cond.wait(lock, [this]() { return m.job_params.has_value() || m.should_stop; });
+    if (m.should_stop) return;
     job();
-    t_start_job = false;
+    m.job_params = std::nullopt;
   }
 }
 
 void WorkerMapBuild::start_job(WorkerMapBuildJobParams&& params) {
-  t_start_job = true;
-  t_params = std::move(params);
-  t_job_cond.notify_one();
+  m.job_params = std::make_optional(std::move(params));
+  m.job_cond.notify_one();
 }
 
 void WorkerMapBuild::end() {
-  t_close = true;
-  t_job_cond.notify_one();
-  if (t_thr.joinable()) {
-    t_thr.join();
+  m.should_stop = true;
+  m.job_cond.notify_one();
+  if (m.thr.joinable()) {
+    m.thr.join();
   }
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Exited successfully");
 }
@@ -49,7 +51,7 @@ void WorkerMapBuild::end() {
 void WorkerMapBuild::job() {
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Job started");
   MapData md;
-  fetch_and_parse(&md, t_params.longA, t_params.latA, t_params.longB, t_params.latB);
+  fetch_and_parse(&md, m.job_params->longA, m.job_params->latA, m.job_params->longB, m.job_params->latB);
 
   // because it might not be immediatly clear,
   // this expression selects buildings, earcuts each one into a list of triangles
@@ -64,7 +66,6 @@ void WorkerMapBuild::job() {
   auto roads_view = md.ways | views::filter([](const Way& w) { return w.is_highway(); });
   res.roads = vector<Way>(roads_view.begin(), roads_view.end());
 
-  // fulfill the promise
-  t_params.promise.set_value(res);
+  m.job_params->promise.set_value(res);
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Job finished");
 }

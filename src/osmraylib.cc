@@ -68,8 +68,10 @@ int main() {
   Vector2 world_a = to2DCoords(LONG_A, LAT_A);
   Vector2 world_b = to2DCoords(LONG_B, LAT_B);
 
-  WorkerMapBuild build_worker;
-  build_worker.run_idling();
+  print_vec2(world_b);
+
+  WorkerMapBuild build_worker {};
+  build_worker.start_idling();
 
   Camera3D camera = { 
     .position = { 0.0f, 10.0f, 10.0f }, 
