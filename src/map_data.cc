@@ -5,6 +5,7 @@
 #include <print>
 #include <format>
 #include <cstdint>
+#include <tuple>
 #include <cmath>
 #include "map_data.hpp"
 
@@ -43,18 +44,27 @@ bool Way::is_highway() const noexcept {
 }
 
 static double ref_lon = 0.0; static double ref_lat = 0.0;
+static const double EARTH_RAD = 6371.0 * 100.0; // <- this scale factor should be ajusted for convenience 100 -> 1u=1dm, 1000 -> 1u=1m
 void setProjectionReference(double lon, double lat) {
   ref_lon = lon;
   ref_lat = lat;
 }
+
 Vector2 to2DCoords(double lon, double lat) {
-  static const double EARTH_RAD = 6371.0 * 100.0; // <- this scale factor should be ajusted for convenience 100 -> 1u=1dm, 1000 -> 1u=1m
   double dlat = (lat - ref_lat) * M_PI / 180.0;
   double dlon = (lon - ref_lon) * M_PI / 180.0;
   return Vector2 {
     .x = (float)(EARTH_RAD * dlon * cos(ref_lat * M_PI / 180.0)),
     .y = (float)(EARTH_RAD * dlat),
   };
+}
+
+pair<double, double> toMapCoords(Vector2 v) {
+  const static float PI_EARTH = M_PI * EARTH_RAD;
+  return make_pair(
+    ((180.0f * v.x) / (PI_EARTH * cos(ref_lat * M_PI / 180.0))) + ref_lon,
+    ((180.0f * v.y) / PI_EARTH) + ref_lat
+  );
 }
 
 static size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {

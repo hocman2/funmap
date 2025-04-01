@@ -13,12 +13,11 @@
 
 using namespace std;
 
+// These are the starting coordinates
 const double LONG_A = 2.25797;
 const double LAT_A  = 48.61416;
 const double LONG_B = 2.26037;
 const double LAT_B  = 48.61511;
-const double LONG_DELTA = LONG_B - LONG_A;
-const double LAT_DELTA = LAT_B - LAT_A;
 
 void print_vec2(float x, float y) {
   println("Vector2({}, {})", x, y);
@@ -65,10 +64,12 @@ int main() {
   // we'll have heavy distortion because we are using flat projection (tangent plane)
   setProjectionReference(LONG_A, LAT_A);
 
-  Vector2 world_a = to2DCoords(LONG_A, LAT_A);
-  Vector2 world_b = to2DCoords(LONG_B, LAT_B);
-
-  print_vec2(world_b);
+  double longA = LONG_A;
+  double longB = LONG_B;
+  double latA = LAT_A;
+  double latB = LAT_B;
+  Vector2 world_a = to2DCoords(longA, latA);
+  Vector2 world_b = to2DCoords(longB, latB);
 
   WorkerMapBuild build_worker {};
   build_worker.start_idling();
@@ -81,14 +82,11 @@ int main() {
     .projection = CAMERA_PERSPECTIVE
   };
 
-  double longA = LONG_A;
-  double longB = LONG_B;
-  double latA = LAT_A;
-  double latB = LAT_B;
-
   Material mat = initialize_mat();
   vector<EarcutMesh> meshes;
   vector<Way> roads;
+  vector<pair<Vector2, Vector2>> coordinate_pairs;
+  coordinate_pairs.push_back(make_pair(world_a, world_b));
 
   future<WorkerMapBuildJobResult> map_build_job_future;
   while(!WindowShouldClose()) {
@@ -109,10 +107,13 @@ int main() {
       meshes.insert_range(meshes.end(), res.meshes);
       roads.insert_range(roads.end(), res.roads);
 
-      longA = longB;
-      longB = longB + LONG_DELTA;
-      latA = latB;
-      latB = latB + LAT_DELTA;
+      Vector2 delta = Vector2Subtract(world_b, world_a);
+      tie(longA, latA) = toMapCoords(Vector2 {world_a.x - delta.x, world_a.y}); 
+      tie(longB, latB) = toMapCoords(Vector2 {world_a.x, world_b.y}); 
+
+      world_a = to2DCoords(longA, latA);
+      world_b = to2DCoords(longB, latB);
+      coordinate_pairs.push_back(make_pair(world_a, world_b));
     } 
     
     if (IsKeyPressed(KEY_R)) {
@@ -151,10 +152,12 @@ int main() {
           }
         }
 
-        DrawSphere(Vector3(world_a.x, 0.f, world_a.y), .5f, RED);
-        DrawSphere(Vector3(world_b.x, 0.f, world_b.y), .5f, GREEN);
-        DrawSphere(Vector3(world_b.x, 0.f, world_a.y), .5f, BLUE);
-        DrawSphere(Vector3(world_a.x, 0.f, world_b.y), .5f, PURPLE);
+        for (const auto& pair : coordinate_pairs) {
+          DrawSphere(Vector3(pair.first.x, 0.f, pair.first.y), .5f, RED);
+          DrawSphere(Vector3(pair.second.x, 0.f, pair.second.y), .5f, GREEN);
+          DrawSphere(Vector3(pair.second.x, 0.f, pair.first.y), .5f, BLUE);
+          DrawSphere(Vector3(pair.first.x, 0.f, pair.second.y), .5f, PURPLE);
+        }
 
         DrawGrid(10, 1.f);
       EndMode3D();
