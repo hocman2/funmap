@@ -20,6 +20,14 @@ const double LAT_B  = 48.61511;
 const double LONG_DELTA = LONG_B - LONG_A;
 const double LAT_DELTA = LAT_B - LAT_A;
 
+void print_vec2(float x, float y) {
+  println("Vector2({}, {})", x, y);
+}
+
+void print_vec2(Vector2 v) {
+  print_vec2(v.x, v.y);
+}
+
 Material initialize_mat() {
   Shader shader = LoadShader("resources/shaders/flat_shade.vs", "resources/shaders/flat_shade.fs");
 
@@ -52,7 +60,13 @@ int main() {
   InitWindow(1000, 1000, "ZIZIMAP");
   SetTargetFPS(60);
   DisableCursor();
-  Vector2 world_origin = to2DCoords(LONG_A, LAT_A);
+
+  // The reference point for future projections, if we leave this at 0.0 0.0
+  // we'll have heavy distortion because we are using flat projection (tangent plane)
+  setProjectionReference(LONG_A, LAT_A);
+
+  Vector2 world_a = to2DCoords(LONG_A, LAT_A);
+  Vector2 world_b = to2DCoords(LONG_B, LAT_B);
 
   WorkerMapBuild build_worker;
   build_worker.run_idling();
@@ -120,21 +134,26 @@ int main() {
 
       BeginMode3D(camera);
         for (const EarcutMesh& m : meshes) {
-          Vector2 mesh_pos = Vector2Subtract(m.world_offset, world_origin);
+          Vector2 mesh_pos = m.world_offset;
           Matrix transform = MatrixTranslate(mesh_pos.x, 0.f, mesh_pos.y);
           DrawMesh(m.mesh, mat, transform);
         }
 
         for (const Way& w : roads) {
           if (w.nodes.size() < 2) continue;
-          Vector2 pv = Vector2Subtract(to2DCoords(w.nodes[0].longitude, w.nodes[0].latitude), world_origin);
+          Vector2 pv = to2DCoords(w.nodes[0].longitude, w.nodes[0].latitude);
           for (size_t i = 1; i < w.nodes.size(); ++i) {
-            Vector2 end = Vector2Subtract(to2DCoords(w.nodes[i].longitude, w.nodes[i].latitude), world_origin);
+            Vector2 end = to2DCoords(w.nodes[i].longitude, w.nodes[i].latitude);
             DrawLine3D(Vector3 {pv.x, 0.f, pv.y}, Vector3 {end.x, 0.f, end.y}, BLUE);
             pv = end;
           }
         }
-        DrawSphere(Vector3Zero(), .5f, RED);
+
+        DrawSphere(Vector3(world_a.x, 0.f, world_a.y), .5f, RED);
+        DrawSphere(Vector3(world_b.x, 0.f, world_b.y), .5f, GREEN);
+        DrawSphere(Vector3(world_b.x, 0.f, world_a.y), .5f, BLUE);
+        DrawSphere(Vector3(world_a.x, 0.f, world_b.y), .5f, PURPLE);
+
         DrawGrid(10, 1.f);
       EndMode3D();
     EndDrawing();

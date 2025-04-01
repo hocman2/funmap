@@ -50,5 +50,5 @@ struct MapData {
 
 void fetch_and_parse(MapData* md, double longA, double latA, double longB, double latB);
 
-struct Vector3 to3DCoords(double lon, double lat); 
+void setProjectionReference(double lon, double lat);
 struct Vector2 to2DCoords(double lon, double lat);

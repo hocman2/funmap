@@ -42,11 +42,18 @@ bool Way::is_highway() const noexcept {
     return true;
 }
 
+static double ref_lon = 0.0; static double ref_lat = 0.0;
+void setProjectionReference(double lon, double lat) {
+  ref_lon = lon;
+  ref_lat = lat;
+}
 Vector2 to2DCoords(double lon, double lat) {
-  const float scale = 10000.f;
+  static const double EARTH_RAD = 6371.0 * 100.0; // <- this scale factor should be ajusted for convenience 100 -> 1u=1dm, 1000 -> 1u=1m
+  double dlat = (lat - ref_lat) * M_PI / 180.0;
+  double dlon = (lon - ref_lon) * M_PI / 180.0;
   return Vector2 {
-    .x = (float)(lat*scale),
-    .y = (float)(lon*scale*cos(lat*M_PI/180.f)),
+    .x = (float)(EARTH_RAD * dlon * cos(ref_lat * M_PI / 180.0)),
+    .y = (float)(EARTH_RAD * dlat),
   };
 }
 
