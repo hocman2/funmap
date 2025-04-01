@@ -22,12 +22,21 @@ EarcutResult earcut_single(const Way& w) {
     ListNode* pv;
   };
 
+  // We are not inverting origin.y to keep the world_transform consistent in the return value,
+  // we do need to invert it when generating 2D coordinates below
   Vector2 origin = to2DCoords(w.nodes[0].longitude, w.nodes[0].latitude);
 
   // simply transform node coordinates into Vector2s w/ origin being the first node's coordinates
   auto verts_range = w.nodes 
     | views::take(w.nodes.size()-1)  // skip last node as it's == to the first one
-    | views::transform([&origin](const Node& n) -> Vector2 { return Vector2Subtract(to2DCoords(n.longitude, n.latitude), origin); });
+    | views::transform([&origin](const Node& n) -> Vector2 { 
+      // it's importaznt to invert the y coordinate because we are ultimately projecting on XZ plane and
+      // OGL's Z is inverted
+      // Not doing this results in an incorrect mirrored map
+      Vector2 v = Vector2Subtract(to2DCoords(n.longitude, n.latitude), Vector2 {origin.x, -origin.y});
+      v.y = -v.y;
+      return v; 
+    });
 
   // storing vertices data as a doubly linked list
   ListNode vertices_buffer[LIST_NODES_BUFFER_SZ];
@@ -53,10 +62,12 @@ EarcutResult earcut_single(const Way& w) {
 
   // the signed area allows us to know if the winding is clockwise or not, useful for determining vertex concaveness 
   float double_signed_area = 0.0f;
-  for (ListNode* vertex = vert_head; vertex != vert_tail; vertex = vertex->nx) {
-    ListNode* vertex_nx = vertex->nx;
-    double_signed_area += (vertex->data.x * vertex_nx->data.y - vertex_nx->data.x * vertex->data.y);
-  }
+  ListNode* vertex_i = vert_head;
+  do {
+    ListNode* vertex_nx = vertex_i->nx;
+    double_signed_area += (vertex_i->data.x * vertex_nx->data.y - vertex_nx->data.x * vertex_i->data.y);
+    vertex_i = vertex_nx;
+  } while(vertex_i != vert_head);
   bool winding_clockwise = double_signed_area > 0;
 
   // keep track of convex vertices
@@ -74,42 +85,45 @@ EarcutResult earcut_single(const Way& w) {
     }
   };
 
-  for (ListNode* vertex = vert_head; vertex != vert_tail; vertex = vertex->nx)
-    update_convex(vertex);
+  vertex_i = vert_head;
+  do {
+    update_convex(vertex_i);
+    vertex_i = vertex_i->nx;
+  } while(vertex_i != vert_head);
 
   vector<Triangle> triangles;
   triangles.reserve(2*num_verts-2);
 
   // before performing the actual earcut, we'll generate side faces (walls)
   // we are doing that before earcutting because the process messes up the linked list
-  ListNode* vi = vert_head;
+  vertex_i = vert_head;
   do {
     if (winding_clockwise) {
       triangles.push_back({
-        Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
-        Vector3 { .x = vi->data.x,      .y = BUILDING_ELEVATION, .z = vi->data.y },
-        Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
+        Vector3 { .x = vertex_i->data.x,      .y = 0.f               , .z = vertex_i->data.y },
+        Vector3 { .x = vertex_i->data.x,      .y = BUILDING_ELEVATION, .z = vertex_i->data.y },
+        Vector3 { .x = vertex_i->nx->data.x,  .y = BUILDING_ELEVATION, .z = vertex_i->nx->data.y },
       });
       triangles.push_back({
-        Vector3 { .x = vi->nx->data.x,  .y = 0.f               , .z = vi->nx->data.y },
-        Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
-        Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
+        Vector3 { .x = vertex_i->nx->data.x,  .y = 0.f               , .z = vertex_i->nx->data.y },
+        Vector3 { .x = vertex_i->data.x,      .y = 0.f               , .z = vertex_i->data.y },
+        Vector3 { .x = vertex_i->nx->data.x,  .y = BUILDING_ELEVATION, .z = vertex_i->nx->data.y },
       });
     } else {
       triangles.push_back({
-        Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
-        Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
-        Vector3 { .x = vi->data.x,      .y = BUILDING_ELEVATION, .z = vi->data.y },
+        Vector3 { .x = vertex_i->data.x,      .y = 0.f               , .z = vertex_i->data.y },
+        Vector3 { .x = vertex_i->nx->data.x,  .y = BUILDING_ELEVATION, .z = vertex_i->nx->data.y },
+        Vector3 { .x = vertex_i->data.x,      .y = BUILDING_ELEVATION, .z = vertex_i->data.y },
       });
       triangles.push_back({
-        Vector3 { .x = vi->nx->data.x,  .y = BUILDING_ELEVATION, .z = vi->nx->data.y },
-        Vector3 { .x = vi->data.x,      .y = 0.f               , .z = vi->data.y },
-        Vector3 { .x = vi->nx->data.x,  .y = 0.f               , .z = vi->nx->data.y },
+        Vector3 { .x = vertex_i->nx->data.x,  .y = BUILDING_ELEVATION, .z = vertex_i->nx->data.y },
+        Vector3 { .x = vertex_i->data.x,      .y = 0.f               , .z = vertex_i->data.y },
+        Vector3 { .x = vertex_i->nx->data.x,  .y = 0.f               , .z = vertex_i->nx->data.y },
       });
     }
 
-    vi = vi->nx;
-  } while (vi != vert_head);
+    vertex_i = vertex_i->nx;
+  } while (vertex_i != vert_head);
 
   auto push_triangle = [&triangles, &winding_clockwise, &BUILDING_ELEVATION](Vector2& a, Vector2& b, Vector2& c) {
     if (winding_clockwise) {
