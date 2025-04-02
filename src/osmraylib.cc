@@ -147,7 +147,7 @@ int main() {
           Vector2 pv = to2DCoords(w.nodes[0].longitude, w.nodes[0].latitude);
           for (size_t i = 1; i < w.nodes.size(); ++i) {
             Vector2 end = to2DCoords(w.nodes[i].longitude, w.nodes[i].latitude);
-            DrawLine3D(Vector3 {pv.x, 0.f, -pv.y}, Vector3 {end.x, 0.f, -end.y}, BLUE);
+            DrawLine3D(Vector3 {pv.x, 0.f, pv.y}, Vector3 {end.x, 0.f, end.y}, BLUE);
             pv = end;
           }
         }

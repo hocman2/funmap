@@ -30,11 +30,7 @@ EarcutResult earcut_single(const Way& w) {
   auto verts_range = w.nodes 
     | views::take(w.nodes.size()-1)  // skip last node as it's == to the first one
     | views::transform([&origin](const Node& n) -> Vector2 { 
-      // it's importaznt to invert the y coordinate because we are ultimately projecting on XZ plane and
-      // OGL's Z is inverted
-      // Not doing this results in an incorrect mirrored map
-      Vector2 v = Vector2Subtract(to2DCoords(n.longitude, n.latitude), Vector2 {origin.x, -origin.y});
-      v.y = -v.y;
+      Vector2 v = Vector2Subtract(to2DCoords(n.longitude, n.latitude), origin);
       return v; 
     });
 

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <tuple>
 #include <cmath>
+#include <optional>
 #include "map_data.hpp"
 
 using namespace tinyxml2;
@@ -55,15 +56,17 @@ Vector2 to2DCoords(double lon, double lat) {
   double dlon = (lon - ref_lon) * M_PI / 180.0;
   return Vector2 {
     .x = (float)(EARTH_RAD * dlon * cos(ref_lat * M_PI / 180.0)),
-    .y = (float)(EARTH_RAD * dlat),
+    .y = -(float)(EARTH_RAD * dlat),
   };
 }
 
 pair<double, double> toMapCoords(Vector2 v) {
   const static float PI_EARTH = M_PI * EARTH_RAD;
   return make_pair(
-    ((180.0f * v.x) / (PI_EARTH * cos(ref_lat * M_PI / 180.0))) + ref_lon,
-    ((180.0f * v.y) / PI_EARTH) + ref_lat
+    (((180.0f * v.x) / (PI_EARTH * cos(ref_lat * M_PI / 180.0))) + ref_lon),
+    // Inverted on y axis because we are converting to an XZ plane
+    // where Z goes in the opposite direction of OGL's Z
+    (((180.0f * v.y) / PI_EARTH) + ref_lat)
   );
 }
 
@@ -74,7 +77,7 @@ static size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdat
   return nmemb;
 }
 
-void fetch_and_parse(MapData* md, double longA, double latA, double longB, double latB) {
+optional<pair<long, string>> fetch_and_parse(MapData* md, double longA, double latA, double longB, double latB) {
   string response_data("");
 
   CURL* curl = curl_easy_init();
@@ -82,7 +85,13 @@ void fetch_and_parse(MapData* md, double longA, double latA, double longB, doubl
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
   curl_easy_perform(curl); 
+  long response_code;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
   curl_easy_cleanup(curl);
+
+  if (response_code >= 400) {
+    return make_optional(pair(response_code, response_data));
+  }
 
   XMLDocument doc;
   doc.Parse(response_data.c_str());
@@ -136,4 +145,6 @@ void fetch_and_parse(MapData* md, double longA, double latA, double longB, doubl
       println("Unimplemented element: {}", elem->Name());
     }
   }
+
+  return nullopt;
 }
