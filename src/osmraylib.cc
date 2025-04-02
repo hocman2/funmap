@@ -7,6 +7,8 @@
 #include <cmath>
 #include <ranges>
 #include <future>
+#include <expected>
+#include <variant>
 #include "map_data.hpp"
 #include "worker_map_build.hpp"
 #include "earcut.hpp"
@@ -18,6 +20,8 @@ const double LONG_A = 2.25797;
 const double LAT_A  = 48.61416;
 const double LONG_B = 2.26037;
 const double LAT_B  = 48.61511;
+vector<EarcutMesh> meshes;
+vector<Way> roads;
 
 void print_vec2(float x, float y) {
   println("Vector2({}, {})", x, y);
@@ -55,6 +59,32 @@ Material initialize_mat() {
   return mat;
 }
 
+bool handle_map_build_finished(future<WorkerMapBuild::ExpectedJobResult>& fut) {
+  // new results came in from the map build worker
+  if (!fut.valid() || fut.wait_for(0ms) != future_status::ready) return false;
+
+  WorkerMapBuild::ExpectedJobResult res = fut.get();
+
+  if (!res) {
+    WorkerMapBuild::JobError err = res.error();
+    if (auto* http = get_if<WorkerMapBuild::ErrorHttp>(&err)) {
+      (void)http;
+      // do some stuff with the ror
+      return false;
+    }
+  }
+
+  // first off, meshes must be uploaded to the opengl context, can only be done on the main thread
+  for (EarcutMesh& m : res->meshes) {
+    UploadMesh(&m.mesh, false);
+  }
+
+  meshes.insert_range(meshes.end(), res->meshes);
+  roads.insert_range(roads.end(), res->roads);
+
+  return true;
+}
+
 int main() {
   InitWindow(1000, 1000, "ZIZIMAP");
   SetTargetFPS(60);
@@ -83,30 +113,14 @@ int main() {
   };
 
   Material mat = initialize_mat();
-  vector<EarcutMesh> meshes;
-  vector<Way> roads;
   vector<pair<Vector2, Vector2>> coordinate_pairs;
   coordinate_pairs.push_back(make_pair(world_a, world_b));
 
-  future<WorkerMapBuildJobResult> map_build_job_future;
+  future<WorkerMapBuild::ExpectedJobResult> map_build_job_future;
   while(!WindowShouldClose()) {
     UpdateCamera(&camera, CAMERA_FREE);
 
-    // new results came in from the map build worker
-    if (
-      map_build_job_future.valid() &&
-      map_build_job_future.wait_for(0ms) == future_status::ready
-    ) {
-      WorkerMapBuildJobResult res = map_build_job_future.get();
-
-      // first off, meshes must be uploaded to the opengl context, can only be done on the main thread
-      for (EarcutMesh& m : res.meshes) {
-        UploadMesh(&m.mesh, false);
-      }
-
-      meshes.insert_range(meshes.end(), res.meshes);
-      roads.insert_range(roads.end(), res.roads);
-
+    if (handle_map_build_finished(map_build_job_future)) {
       Vector2 delta = Vector2Subtract(world_b, world_a);
       tie(longA, latA) = toMapCoords(Vector2 {world_a.x - delta.x, world_a.y}); 
       tie(longB, latB) = toMapCoords(Vector2 {world_a.x, world_b.y}); 
@@ -114,15 +128,15 @@ int main() {
       world_a = to2DCoords(longA, latA);
       world_b = to2DCoords(longB, latB);
       coordinate_pairs.push_back(make_pair(world_a, world_b));
-    } 
+    }
     
     if (IsKeyPressed(KEY_R)) {
-      WorkerMapBuildJobParams params;
+      WorkerMapBuild::JobParams params;
       params.longA = longA;
       params.latA = latA;
       params.longB = longB;
       params.latB = latB;
-      params.promise = promise<WorkerMapBuildJobResult>();
+      params.promise = promise<WorkerMapBuild::ExpectedJobResult>();
 
       map_build_job_future = params.promise.get_future();
 

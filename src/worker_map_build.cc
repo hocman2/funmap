@@ -6,6 +6,8 @@
 #include <vector>
 #include <print>
 #include <future>
+#include <optional>
+#include <tuple>
 #include "raylib.h"
 #include "map_data.hpp"
 #include "earcut.hpp"
@@ -34,7 +36,7 @@ void WorkerMapBuild::idle_job() {
   }
 }
 
-void WorkerMapBuild::start_job(WorkerMapBuildJobParams&& params) {
+void WorkerMapBuild::start_job(JobParams&& params) {
   m.job_params = std::make_optional(std::move(params));
   m.job_cond.notify_one();
 }
@@ -51,12 +53,19 @@ void WorkerMapBuild::end() {
 void WorkerMapBuild::job() {
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Job started");
   MapData md;
-  fetch_and_parse(&md, m.job_params->longA, m.job_params->latA, m.job_params->longB, m.job_params->latB);
+  auto err = fetch_and_parse(&md, m.job_params->longA, m.job_params->latA, m.job_params->longB, m.job_params->latB);
+
+  if (err) {
+    const auto& [code, msg] = *err;
+    TraceLog(LOG_ERROR, "WORKER: [MAP BUILD] Job failed: [HTTP %ld]: %s", code, msg.c_str());
+    m.job_params->promise.set_value(unexpected(ErrorHttp {code, msg}));
+    return;
+  }
 
   // because it might not be immediatly clear,
   // this expression selects buildings, earcuts each one into a list of triangles
   // then meshes are generated from these triangles
-  WorkerMapBuildJobResult res;
+  JobResult res;
   res.meshes = [&md]() {
     auto buildings = md.ways | views::filter([](const Way& w){ return w.is_building(); });
     vector<EarcutResult> earcuts = earcut_collection(std::move(buildings));

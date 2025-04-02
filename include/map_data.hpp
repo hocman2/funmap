@@ -4,9 +4,11 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <string_view>
+#include <string>
 #include <cstdint>
 #include <iostream>
 #include <tuple>
+#include <optional>
 
 struct Node {
   uint64_t id;
@@ -49,7 +51,7 @@ struct MapData {
   static std::unordered_set<std::string> tag_values;
 };
 
-void fetch_and_parse(MapData* md, double longA, double latA, double longB, double latB);
+std::optional<std::pair<long, std::string>> fetch_and_parse(MapData* md, double longA, double latA, double longB, double latB);
 
 void setProjectionReference(double lon, double lat);
 struct Vector2 to2DCoords(double lon, double lat);

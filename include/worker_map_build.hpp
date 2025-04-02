@@ -5,34 +5,45 @@
 #include <vector>
 #include <future>
 #include <optional>
+#include <variant>
+#include <expected>
 #include "map_data.hpp"
 #include "earcut.hpp"
 
-struct WorkerMapBuildJobResult {
-  // if i feel like it, i'll make a proper "Road" type someday instead of using the raw
-  // parsed data
-  std::vector<Way> roads;
-  std::vector<EarcutMesh> meshes;
-};
-
-struct WorkerMapBuildJobParams {
-  std::promise<WorkerMapBuildJobResult> promise;
-  double longA;
-  double latA;
-  double longB;
-  double latB;
-};
-
 class WorkerMapBuild {
+public:
+  struct JobResult {
+    // if i feel like it, i'll make a proper "Road" type someday instead of using the raw
+    // parsed data
+    std::vector<Way> roads;
+    std::vector<EarcutMesh> meshes;
+  };
+
+  struct ErrorHttp {
+    long code;
+    std::string msg;
+  };
+
+  using JobError = std::variant<ErrorHttp>;
+
+  using ExpectedJobResult = std::expected<JobResult, JobError>;
+  struct JobParams {
+    std::promise<ExpectedJobResult> promise;
+    double longA;
+    double latA;
+    double longB;
+    double latB;
+  };
+
 public:
   WorkerMapBuild() = default;
   ~WorkerMapBuild();
   void start_idling();
-  void start_job(WorkerMapBuildJobParams&& params);
+  void start_job(JobParams&& params);
   void end();
 private:
   struct M {
-    std::optional<WorkerMapBuildJobParams> job_params = std::nullopt;
+    std::optional<JobParams> job_params = std::nullopt;
 
     // job scheduling flags
     bool should_stop = false;
