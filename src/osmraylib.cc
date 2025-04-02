@@ -8,10 +8,12 @@
 #include <ranges>
 #include <future>
 #include <expected>
+#include <array>
 #include <variant>
 #include "map_data.hpp"
 #include "worker_map_build.hpp"
 #include "earcut.hpp"
+#include "chunk.hpp"
 
 using namespace std;
 
@@ -20,6 +22,7 @@ const double LONG_A = 2.25797;
 const double LAT_A  = 48.61416;
 const double LONG_B = 2.26037;
 const double LAT_B  = 48.61511;
+vector<Chunk> chunks;
 vector<EarcutMesh> meshes;
 vector<Way> roads;
 
@@ -59,31 +62,41 @@ Material initialize_mat() {
   return mat;
 }
 
-bool handle_map_build_finished(future<WorkerMapBuild::ExpectedJobResult>& fut) {
+bool handle_map_build_finished(future<vector<WorkerMapBuild::ExpectedJobResult>>& fut) {
   // new results came in from the map build worker
   if (!fut.valid() || fut.wait_for(0ms) != future_status::ready) return false;
 
-  WorkerMapBuild::ExpectedJobResult res = fut.get();
-
-  if (!res) {
-    WorkerMapBuild::JobError err = res.error();
-    if (auto* http = get_if<WorkerMapBuild::ErrorHttp>(&err)) {
-      (void)http;
-      // do some stuff with the ror
-      return false;
+  size_t i = 0;
+  vector<WorkerMapBuild::ExpectedJobResult> results = fut.get();
+  for (auto& res : results) {
+    if (!res) {
+      chunks[i].status = ChunkStatus::Invalid;
+      WorkerMapBuild::JobError err = res.error();
+      if (auto* internal = get_if<WorkerMapBuild::ErrorInternal>(&err)) {
+        (void)internal;
+        // do some stuff with the error, everything failed anyway
+        return false;
+      }
+      if (auto* http = get_if<WorkerMapBuild::ErrorHttp>(&err)) {
+        (void)http;
+        // do some stuff with the ror
+      }
     }
-  }
 
-  // first off, meshes must be uploaded to the opengl context, can only be done on the main thread
-  for (EarcutMesh& m : res->meshes) {
-    UploadMesh(&m.mesh, false);
-  }
+    // first off, meshes must be uploaded to the opengl context, can only be done on the main thread
+    for (EarcutMesh& m : res->meshes) {
+      UploadMesh(&m.mesh, false);
+    }
 
-  meshes.insert_range(meshes.end(), res->meshes);
-  roads.insert_range(roads.end(), res->roads);
+    chunks[i].status = ChunkStatus::Generated;
+    meshes.insert_range(meshes.end(), res->meshes);
+    roads.insert_range(roads.end(), res->roads);
+    ++i;
+  }
 
   return true;
 }
+
 
 int main() {
   InitWindow(1000, 1000, "ZIZIMAP");
@@ -98,8 +111,6 @@ int main() {
   double longB = LONG_B;
   double latA = LAT_A;
   double latB = LAT_B;
-  Vector2 world_a = to2DCoords(longA, latA);
-  Vector2 world_b = to2DCoords(longB, latB);
 
   WorkerMapBuild build_worker {};
   build_worker.start_idling();
@@ -113,30 +124,25 @@ int main() {
   };
 
   Material mat = initialize_mat();
-  vector<pair<Vector2, Vector2>> coordinate_pairs;
-  coordinate_pairs.push_back(make_pair(world_a, world_b));
+  chunks.push_back(Chunk::build(longA, latA, longB, latB));
 
-  future<WorkerMapBuild::ExpectedJobResult> map_build_job_future;
+  future<vector<WorkerMapBuild::ExpectedJobResult>> map_build_job_future;
   while(!WindowShouldClose()) {
     UpdateCamera(&camera, CAMERA_FREE);
 
     if (handle_map_build_finished(map_build_job_future)) {
-      Vector2 delta = Vector2Subtract(world_b, world_a);
-      tie(longA, latA) = toMapCoords(Vector2 {world_a.x - delta.x, world_a.y}); 
-      tie(longB, latB) = toMapCoords(Vector2 {world_a.x, world_b.y}); 
-
-      world_a = to2DCoords(longA, latA);
-      world_b = to2DCoords(longB, latB);
-      coordinate_pairs.push_back(make_pair(world_a, world_b));
+      if (chunks.size() == 1) {
+        auto adjacents = chunks[0].generate_adjacents();
+        chunks.insert(chunks.end(), adjacents.begin(), adjacents.end());
+      }
     }
     
     if (IsKeyPressed(KEY_R)) {
+      for (Chunk& c : chunks) c.status = ChunkStatus::Generating;
+
       WorkerMapBuild::JobParams params;
-      params.longA = longA;
-      params.latA = latA;
-      params.longB = longB;
-      params.latB = latB;
-      params.promise = promise<WorkerMapBuild::ExpectedJobResult>();
+      params.chunks = chunks;
+      params.promise = promise<vector<WorkerMapBuild::ExpectedJobResult>>();
 
       map_build_job_future = params.promise.get_future();
 
@@ -166,11 +172,35 @@ int main() {
           }
         }
 
-        for (const auto& pair : coordinate_pairs) {
-          DrawSphere(Vector3(pair.first.x, 0.f, pair.first.y), .5f, RED);
-          DrawSphere(Vector3(pair.second.x, 0.f, pair.second.y), .5f, GREEN);
-          DrawSphere(Vector3(pair.second.x, 0.f, pair.first.y), .5f, BLUE);
-          DrawSphere(Vector3(pair.first.x, 0.f, pair.second.y), .5f, PURPLE);
+        for (const Chunk& chunk : chunks) {
+          DrawSphere(Vector3(chunk.world_min.x, 0.f, chunk.world_min.y), .25f, Fade(RED, 0.5f));
+          DrawSphere(Vector3(chunk.world_max.x, 0.f, chunk.world_max.y), .25f, Fade(GREEN, 0.5f));
+          DrawSphere(Vector3(chunk.world_max.x, 0.f, chunk.world_min.y), .25f, Fade(BLUE, 0.5f));
+          DrawSphere(Vector3(chunk.world_min.x, 0.f, chunk.world_max.y), .25f, Fade(PURPLE, 0.5f));
+
+          Color plane_color;
+          switch(chunk.status) {
+            case ChunkStatus::Pending:
+            plane_color = Fade(SKYBLUE, 0.33f);
+            break;
+            case ChunkStatus::Generating:
+            plane_color = Fade(ORANGE, 0.33f);
+            break;
+            case ChunkStatus::Generated:
+            plane_color = Fade(GREEN, 0.33f);
+            break;
+            case ChunkStatus::Invalid:
+            plane_color = Fade(RED, 0.33f);
+            break;
+            default:
+            plane_color = BLACK;
+            break;
+          };
+
+          Vector2 size = Vector2Subtract(chunk.world_max, chunk.world_min);
+          size.x = abs(size.x);
+          size.y = abs(size.y);
+          DrawPlane(Vector3(chunk.world_min.x + size.x * 0.5f, 0.f, chunk.world_min.y - size.y * 0.5f), size, plane_color);
         }
 
         DrawGrid(10, 1.f);

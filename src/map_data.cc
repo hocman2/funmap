@@ -1,5 +1,4 @@
 #include "raylib.h"
-#include "tinyxml2.h"
 #include <curl/curl.h>
 #include <string>
 #include <print>
@@ -10,7 +9,6 @@
 #include <optional>
 #include "map_data.hpp"
 
-using namespace tinyxml2;
 using namespace std;
 
 unordered_set<string> MapData::tag_keys;
@@ -77,74 +75,76 @@ static size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdat
   return nmemb;
 }
 
-optional<pair<long, string>> fetch_and_parse(MapData* md, double longA, double latA, double longB, double latB) {
-  string response_data("");
+vector<HttpResponse> fetch_map_data(const vector<Chunk>& chunks) {
+  vector<CURL*> easy_handles;
+  easy_handles.reserve(chunks.size());
+  vector<HttpResponse> responses;
+  responses.reserve(chunks.size());
 
-  CURL* curl = curl_easy_init();
-  curl_easy_setopt(curl, CURLOPT_URL, format("https://www.openstreetmap.org/api/0.6/map?bbox={},{},{},{}", longA, latA, longB, latB).c_str());
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
-  curl_easy_perform(curl); 
-  long response_code;
-  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-  curl_easy_cleanup(curl);
+  CURLM* curlm = curl_multi_init();
 
-  if (response_code >= 400) {
-    return make_optional(pair(response_code, response_data));
+  for (size_t i = 0; i < chunks.size(); ++i) {
+    double longA = chunks[i].min_lon; 
+    double latA = chunks[i].min_lat; 
+    double longB = chunks[i].max_lon; 
+    double latB = chunks[i].max_lat; 
+
+    CURL* curl = curl_easy_init();
+
+    easy_handles.push_back(curl);
+    responses.push_back(HttpResponse {0, string{}});
+
+    curl_easy_setopt(curl, CURLOPT_URL, format("https://www.openstreetmap.org/api/0.6/map?bbox={},{},{},{}", longA, latA, longB, latB).c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &(responses[i].data));
+
+    curl_multi_add_handle(curlm, curl);
   }
 
-  XMLDocument doc;
-  doc.Parse(response_data.c_str());
-
-  XMLNode* lastChild = doc.RootElement()->LastChildElement();
-  for (XMLElement* elem = doc.RootElement()->FirstChildElement(); elem != lastChild; elem = elem->NextSiblingElement()) {
-    if (elem == nullptr) {
+  int still_running = 1;
+  while(still_running) {
+    // update number of running tasks
+    CURLMcode mc = curl_multi_perform(curlm, &still_running);
+    // fatal error, stop everything and return invalid data
+    if (mc) {
+      for(HttpResponse& resp : responses) {
+        resp.status_code = -1;
+      }
       break;
     }
 
-    XMLPrinter printer;
-    elem->Accept(&printer);
+    // poll so the cpu does not explode
+    if (still_running) {
+      mc = curl_multi_poll(curlm, NULL, 0, 1000, NULL); 
+    }
 
-    if (strcmp(elem->Name(), "node") == 0) {
-        Node n;
-        n.id = elem->Unsigned64Attribute("id");
-        n.longitude = elem->DoubleAttribute("lon");
-        n.latitude = elem->DoubleAttribute("lat");
-        n.visible = elem->BoolAttribute("visible");
-        md->nodes.insert({n.id, n});
-    } else if (strcmp(elem->Name(), "way") == 0) {
-      Way w;
-      w.id = elem->Unsigned64Attribute("id");
-      for (XMLElement* c = elem->FirstChildElement(); c != elem->LastChildElement(); c = c->NextSiblingElement()) {
-        if (strcmp(c->Name(), "nd") == 0) {
-          const Node& nr = (*(md->nodes.find(c->Unsigned64Attribute("ref")))).second;
-          w.nodes.push_back(nr);
-        } else if (strcmp(c->Name(), "tag") == 0) {
-          Tag t;
-          const char* keyVal = c->FindAttribute("k")->Value();
-          string key(keyVal);
-          if (!MapData::tag_keys.contains(key)) {
-            md->tag_keys.insert(key);
-          }
-          t.key = string_view(*(MapData::tag_keys.find(key)));
+    // read msgs of finished taks
+    CURLMsg* msg;
+    int _queued;
+    do {
+      msg = curl_multi_info_read(curlm, &_queued);
+      if (!msg || msg->msg != CURLMSG_DONE) continue;
 
-          const char* valVal = c->FindAttribute("v")->Value();
-          string val(valVal);
-          if (!MapData::tag_values.contains(val)) {
-            md->tag_values.insert(val);
-          }
-          t.value = string_view(*(MapData::tag_values.find(val)));
-
-          w.tags.insert(t);
-        } else {
-          println("Unimplemented way child tag: {}", c->Name());
+      // find which handle is done
+      size_t handle_idx = 0;
+      for (size_t i = 0; i < easy_handles.size(); ++i) {
+        if (msg->easy_handle == easy_handles[i]) {
+          handle_idx = i;
+          break;
         }
       }
-      md->ways.push_back(w);
-    } else {
-      println("Unimplemented element: {}", elem->Name());
-    }
+
+      // write the response code and kick that guy out
+      long* status_code = &(responses[handle_idx].status_code);
+      curl_easy_getinfo(msg->easy_handle, CURLINFO_RESPONSE_CODE, status_code);
+      curl_multi_remove_handle(curlm, msg->easy_handle);
+      curl_easy_cleanup(msg->easy_handle);
+      easy_handles[handle_idx] = nullptr;
+
+    } while(msg);
   }
 
-  return nullopt;
+  curl_multi_cleanup(curlm);
+
+  return responses;
 }

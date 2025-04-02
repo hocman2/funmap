@@ -52,29 +52,57 @@ void WorkerMapBuild::end() {
 
 void WorkerMapBuild::job() {
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Job started");
-  MapData md;
-  auto err = fetch_and_parse(&md, m.job_params->longA, m.job_params->latA, m.job_params->longB, m.job_params->latB);
+  size_t num_chunks = m.job_params->chunks.size();
+  vector<ExpectedJobResult> job_results;
+  job_results.reserve(num_chunks);
+  // it has to be initialized i guess
+  for (size_t i = 0; i < num_chunks; ++i) 
+    job_results.push_back(JobResult {});
 
-  if (err) {
-    const auto& [code, msg] = *err;
-    TraceLog(LOG_ERROR, "WORKER: [MAP BUILD] Job failed: [HTTP %ld]: %s", code, msg.c_str());
-    m.job_params->promise.set_value(unexpected(ErrorHttp {code, msg}));
-    return;
+  vector<HttpResponse> responses = fetch_map_data(m.job_params->chunks);
+
+  // read responses for potential errors
+  for (size_t i = 0; i < responses.size(); ++i) {
+    const HttpResponse& r = responses[i];
+    // not very explicit, means curl failed, not the requests themselves
+    // could also use some error code
+    if (r.status_code == -1) {
+      TraceLog(LOG_ERROR, "WORKER: [MAP BUILD] Job failed, fatal error occured");
+      m.job_params->promise.set_value(vector<ExpectedJobResult> { unexpected(ErrorInternal{}) });
+      return;
+    }
+
+    if (r.status_code >= 400) {
+      job_results[i] = unexpected(ErrorHttp {r.status_code, r.data}); 
+    }
   }
 
-  // because it might not be immediatly clear,
-  // this expression selects buildings, earcuts each one into a list of triangles
-  // then meshes are generated from these triangles
-  JobResult res;
-  res.meshes = [&md]() {
-    auto buildings = md.ways | views::filter([](const Way& w){ return w.is_building(); });
-    vector<EarcutResult> earcuts = earcut_collection(std::move(buildings));
-    return build_meshes(earcuts);
-  }();
+  const auto xml_resps = responses | views::transform([](const HttpResponse& r) -> optional<string_view> { 
+    if (r.status_code >= 400) {
+      return nullopt;
+    } else {
+      return string_view(r.data);
+    }
+  });
+  vector<MapData> mds = parse_map_data(xml_resps);
 
-  auto roads_view = md.ways | views::filter([](const Way& w) { return w.is_highway(); });
-  res.roads = vector<Way>(roads_view.begin(), roads_view.end());
+  for (size_t i = 0; i < mds.size(); ++i) {
+    if (!job_results[i].has_value()) continue; // maybe already holds an http error
 
-  m.job_params->promise.set_value(res);
+    // because it might not be immediatly clear,
+    // this expression selects buildings, earcuts each one into a list of triangles
+    // then meshes are generated from these triangles
+    MapData& md = mds[i];
+    job_results[i]->meshes = [&md]() {
+      auto buildings = md.ways | views::filter([](const Way& w){ return w.is_building(); });
+      vector<EarcutResult> earcuts = earcut_collection(std::move(buildings));
+      return build_meshes(earcuts);
+    }();
+
+    auto roads_view = md.ways | views::filter([](const Way& w) { return w.is_highway(); });
+    job_results[i]->roads = vector<Way>(roads_view.begin(), roads_view.end());
+  }
+
+  m.job_params->promise.set_value(job_results);
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Job finished");
 }

@@ -7,6 +7,7 @@
 #include <optional>
 #include <variant>
 #include <expected>
+#include "chunk.hpp"
 #include "map_data.hpp"
 #include "earcut.hpp"
 
@@ -24,15 +25,14 @@ public:
     std::string msg;
   };
 
-  using JobError = std::variant<ErrorHttp>;
+  struct ErrorInternal {};
+
+  using JobError = std::variant<ErrorHttp, ErrorInternal>;
 
   using ExpectedJobResult = std::expected<JobResult, JobError>;
   struct JobParams {
-    std::promise<ExpectedJobResult> promise;
-    double longA;
-    double latA;
-    double longB;
-    double latB;
+    std::promise<std::vector<ExpectedJobResult>> promise;
+    std::vector<Chunk> chunks;
   };
 
 public:
