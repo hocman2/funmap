@@ -66,7 +66,7 @@ pair<double, double> toMapCoords(Vector2 v) {
     (((180.0f * v.x) / (PI_EARTH * cos(ref_lat * M_PI / 180.0))) + ref_lon),
     // Inverted on y axis because we are converting to an XZ plane
     // where Z goes in the opposite direction of OGL's Z
-    (((180.0f * v.y) / PI_EARTH) + ref_lat)
+    (((180.0f * -v.y) / PI_EARTH) + ref_lat)
   );
 }
 
