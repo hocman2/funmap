@@ -1,15 +1,19 @@
+#include "map_data.hpp"
 #include "raylib.h"
+#include "tinyxml2.h"
 #include <curl/curl.h>
 #include <string>
 #include <print>
 #include <format>
 #include <cstdint>
+#include <cassert>
 #include <tuple>
+#include <memory>
 #include <cmath>
 #include <optional>
-#include "map_data.hpp"
 
 using namespace std;
+using namespace tinyxml2;
 
 unordered_set<string> MapData::tag_keys;
 unordered_set<string> MapData::tag_values;
@@ -75,24 +79,27 @@ static size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdat
   return nmemb;
 }
 
-vector<HttpResponse> fetch_map_data(const vector<Chunk>& chunks) {
+vector<HttpResponse> fetch_map_data(const vector<shared_ptr<Chunk>>& chunks) {
+  // two mapped arrays, easy_handles[i] => responses[i]
   vector<CURL*> easy_handles;
-  easy_handles.reserve(chunks.size());
   vector<HttpResponse> responses;
   responses.reserve(chunks.size());
+  easy_handles.reserve(chunks.size());
 
   CURLM* curlm = curl_multi_init();
 
   for (size_t i = 0; i < chunks.size(); ++i) {
-    double longA = chunks[i].min_lon; 
-    double latA = chunks[i].min_lat; 
-    double longB = chunks[i].max_lon; 
-    double latB = chunks[i].max_lat; 
+    if (!chunks[i]) assert(false); // wtf man
+
+    double longA = chunks[i]->min_lon; 
+    double latA = chunks[i]->min_lat; 
+    double longB = chunks[i]->max_lon; 
+    double latB = chunks[i]->max_lat; 
 
     CURL* curl = curl_easy_init();
 
     easy_handles.push_back(curl);
-    responses.push_back(HttpResponse {0, string{}});
+    responses.push_back(HttpResponse {chunks[i], 0, string{}});
 
     curl_easy_setopt(curl, CURLOPT_URL, format("https://www.openstreetmap.org/api/0.6/map?bbox={},{},{},{}", longA, latA, longB, latB).c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
@@ -147,4 +154,63 @@ vector<HttpResponse> fetch_map_data(const vector<Chunk>& chunks) {
   curl_multi_cleanup(curlm);
 
   return responses;
+}
+
+MapData parse_map_data(string_view response) {
+  MapData md = MapData {};
+
+  XMLDocument doc;
+  doc.Parse(response.data());
+  XMLNode* lastChild = doc.RootElement()->LastChildElement();
+
+  for (XMLElement* elem = doc.RootElement()->FirstChildElement(); elem != lastChild; elem = elem->NextSiblingElement()) {
+    if (elem == nullptr) {
+      break;
+    }
+
+    XMLPrinter printer;
+    elem->Accept(&printer);
+
+    if (strcmp(elem->Name(), "node") == 0) {
+        Node n;
+        n.id = elem->Unsigned64Attribute("id");
+        n.longitude = elem->DoubleAttribute("lon");
+        n.latitude = elem->DoubleAttribute("lat");
+        n.visible = elem->BoolAttribute("visible");
+        md.nodes.insert({n.id, n});
+    } else if (strcmp(elem->Name(), "way") == 0) {
+      Way w;
+      w.id = elem->Unsigned64Attribute("id");
+      for (XMLElement* c = elem->FirstChildElement(); c != elem->LastChildElement(); c = c->NextSiblingElement()) {
+        if (strcmp(c->Name(), "nd") == 0) {
+          const Node& nr = (*(md.nodes.find(c->Unsigned64Attribute("ref")))).second;
+          w.nodes.push_back(nr);
+        } else if (strcmp(c->Name(), "tag") == 0) {
+          Tag t;
+          const char* keyVal = c->FindAttribute("k")->Value();
+          string key(keyVal);
+          if (!MapData::tag_keys.contains(key)) {
+            md.tag_keys.insert(key);
+          }
+          t.key = string_view(*(MapData::tag_keys.find(key)));
+
+          const char* valVal = c->FindAttribute("v")->Value();
+          string val(valVal);
+          if (!MapData::tag_values.contains(val)) {
+            md.tag_values.insert(val);
+          }
+          t.value = string_view(*(MapData::tag_values.find(val)));
+
+          w.tags.insert(t);
+        } else {
+          println("Unimplemented way child tag: {}", c->Name());
+        }
+      }
+      md.ways.push_back(w);
+    } else {
+      println("Unimplemented element: {}", elem->Name());
+    }
+  }
+
+  return md;
 }

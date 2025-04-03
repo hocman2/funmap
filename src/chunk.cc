@@ -1,67 +1,89 @@
 #include "chunk.hpp"
 #include "map_data.hpp"
-#include <array>
+#include "earcut.hpp"
 #include "raymath.h"
+#include "rlgl.h"
+#include <array>
+#include <vector>
+#include <mutex>
+#include <memory>
 
 using namespace std;
 
-Chunk Chunk::build(double longA, double latA, double longB, double latB) {
-  return Chunk {
-    .min_lon = longA, 
-    .min_lat = latA,
-    .max_lon = longB, 
-    .max_lat = latB,
-    .world_min = to2DCoords(longA, latA),
-    .world_max = to2DCoords(longB, latB),
-    .status = ChunkStatus::Pending,
-  };
+Chunk::Chunk(double longA, double latA, double longB, double latB):
+  min_lon(longA), min_lat(latA), max_lon(longB), max_lat(latB),
+  world_min(to2DCoords(longA, latA)), world_max(to2DCoords(longB, latB)),
+  m()
+{}
+
+void Chunk::upload_meshes(vector<unique_ptr<EarcutMesh>>&& in_meshes) {
+  const lock_guard<mutex> lock(m_mtx);
+  m.meshes = std::move(in_meshes);
+
+  for (unique_ptr<EarcutMesh>& mesh : m.meshes) {
+    UploadMesh(&(mesh->mesh), false);
+  }
 }
 
-array<Chunk, 8> Chunk::generate_adjacents() const {
+void Chunk::upload_roads(vector<unique_ptr<Way>>&& in_roads) {
+  const lock_guard<mutex> lock(m_mtx);
+  m.roads = std::move(in_roads);
+}
+
+void Chunk::unload() {
+  const lock_guard<mutex> lock(m_mtx);
+  for (unique_ptr<EarcutMesh>& mesh : m.meshes) 
+    UnloadMesh(mesh->mesh);
+  m.meshes.clear();
+  m.roads.clear();
+  m.status = ChunkStatus::Pending;
+}
+
+array<shared_ptr<Chunk>, 8> Chunk::generate_adjacents() const {
   Vector2 delta = Vector2Subtract(world_max, world_min);
 
-  array<Chunk, 8> adjacents;
+  array<shared_ptr<Chunk>, 8> adjacents;
 
   double longA, latA, longB, latB;
   // north
   tie(longA, latA) = toMapCoords(Vector2 {world_min.x, world_min.y + delta.y}); 
   tie(longB, latB) = toMapCoords(Vector2 {world_max.x, world_max.y + delta.y}); 
-  adjacents.at(0) = Chunk::build(longA, latA, longB, latB);
+  adjacents.at(0) = make_shared<Chunk>(longA, latA, longB, latB);
 
   // north-east
   tie(longA, latA) = toMapCoords(Vector2 {world_max.x, world_min.y + delta.y}); 
   tie(longB, latB) = toMapCoords(Vector2 {world_max.x + delta.x, world_max.y + delta.y}); 
-  adjacents.at(1) = Chunk::build(longA, latA, longB, latB);
+  adjacents.at(1) = make_shared<Chunk>(longA, latA, longB, latB);
 
   // east
   tie(longA, latA) = toMapCoords(Vector2 {world_min.x + delta.x, world_min.y}); 
   tie(longB, latB) = toMapCoords(Vector2 {world_max.x + delta.x, world_max.y}); 
-  adjacents.at(2) = Chunk::build(longA, latA, longB, latB);
+  adjacents.at(2) = make_shared<Chunk>(longA, latA, longB, latB);
 
   // south-east
   tie(longA, latA) = toMapCoords(Vector2 {world_min.x + delta.x, world_min.y - delta.y}); 
   tie(longB, latB) = toMapCoords(Vector2 {world_max.x + delta.x, world_max.y - delta.y}); 
-  adjacents.at(3) = Chunk::build(longA, latA, longB, latB);
+  adjacents.at(3) = make_shared<Chunk>(longA, latA, longB, latB);
 
   // south
   tie(longA, latA) = toMapCoords(Vector2 {world_min.x, world_min.y - delta.y}); 
   tie(longB, latB) = toMapCoords(Vector2 {world_max.x, world_max.y - delta.y}); 
-  adjacents.at(4) = Chunk::build(longA, latA, longB, latB);
+  adjacents.at(4) = make_shared<Chunk>(longA, latA, longB, latB);
 
   // south-west
   tie(longA, latA) = toMapCoords(Vector2 {world_min.x - delta.x, world_min.y - delta.y}); 
   tie(longB, latB) = toMapCoords(Vector2 {world_max.x - delta.x, world_max.y - delta.y}); 
-  adjacents.at(5) = Chunk::build(longA, latA, longB, latB);
+  adjacents.at(5) = make_shared<Chunk>(longA, latA, longB, latB);
 
   // west
   tie(longA, latA) = toMapCoords(Vector2 {world_min.x - delta.x, world_min.y}); 
   tie(longB, latB) = toMapCoords(Vector2 {world_max.x - delta.x, world_max.y}); 
-  adjacents.at(6) = Chunk::build(longA, latA, longB, latB);
+  adjacents.at(6) = make_shared<Chunk>(longA, latA, longB, latB);
 
   // north-west
   tie(longA, latA) = toMapCoords(Vector2 {world_min.x - delta.x, world_min.y + delta.y}); 
   tie(longB, latB) = toMapCoords(Vector2 {world_max.x - delta.x, world_max.y + delta.y}); 
-  adjacents.at(7) = Chunk::build(longA, latA, longB, latB);
+  adjacents.at(7) = make_shared<Chunk>(longA, latA, longB, latB);
 
   return adjacents;
 }

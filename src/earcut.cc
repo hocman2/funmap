@@ -4,6 +4,7 @@
 #include <cmath>
 #include <ranges>
 #include <vector>
+#include <memory>
 #include "map_data.hpp"
 #include "raylib.h"
 #include "raymath.h"
@@ -187,8 +188,8 @@ EarcutResult earcut_single(const Way& w) {
   };
 }
 
-vector<EarcutMesh> build_meshes(const vector<EarcutResult>& earcuts) {
-  auto build_and_upload_single = [](const EarcutResult& earcut) -> EarcutMesh {
+vector<unique_ptr<EarcutMesh>> build_meshes(const vector<EarcutResult>& earcuts) {
+  auto build_and_upload_single = [](const EarcutResult& earcut) -> unique_ptr<EarcutMesh> {
     Mesh mesh {0};
     size_t num_tris = earcut.triangles.size();
     mesh.vertexCount = num_tris * 3;
@@ -229,12 +230,9 @@ vector<EarcutMesh> build_meshes(const vector<EarcutResult>& earcuts) {
       mesh.normals[i*9+8] = normal.z;
     }
 
-    return EarcutMesh {
-      .mesh = mesh,
-      .world_offset = earcut.world_offset,
-    };
+    return make_unique<EarcutMesh>(EarcutMesh {mesh, earcut.world_offset});
   };
 
   auto mesh_transform = earcuts | views::transform(build_and_upload_single);
-  return vector<EarcutMesh>(mesh_transform.begin(), mesh_transform.end());
+  return vector<unique_ptr<EarcutMesh>>(mesh_transform.begin(), mesh_transform.end());
 }

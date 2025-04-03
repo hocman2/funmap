@@ -13,16 +13,16 @@ osmraylib: $(OBJS)
 obj/osmraylib.o: $(SRCS) $(INCS)
 	$(CC) $(CXXFLAGS) $(INCLUDE_DIRS) -c src/osmraylib.cc -o obj/osmraylib.o
 
-obj/chunk.o: src/chunk.cc include/chunk.hpp
+obj/chunk.o: src/chunk.cc include/chunk.hpp include/types/earcut.hpp include/types/map_data.hpp
 	$(CC) $(CXXFLAGS) $(INCLUDE_DIRS) -c src/chunk.cc -o obj/chunk.o
 
-obj/map_data.o: src/map_data.cc include/map_data.hpp
+obj/map_data.o: src/map_data.cc include/map_data.hpp include/types/map_data.hpp include/types/earcut.hpp
 	$(CC) $(CXXFLAGS) $(INCLUDE_DIRS) -c src/map_data.cc -o obj/map_data.o
 
-obj/worker_map_build.o: src/worker_map_build.cc include/worker_map_build.hpp src/map_data.cc include/map_data.hpp src/earcut.cc include/earcut.hpp
+obj/worker_map_build.o: src/worker_map_build.cc include/worker_map_build.hpp src/map_data.cc include/map_data.hpp src/earcut.cc include/earcut.hpp include/types/earcut.hpp
 	$(CC) $(CXXFLAGS) $(INCLUDE_DIRS) -c src/worker_map_build.cc -o obj/worker_map_build.o
 
-obj/earcut.o: src/earcut.cc include/earcut.hpp src/map_data.cc include/map_data.hpp
+obj/earcut.o: src/earcut.cc include/earcut.hpp include/types/earcut.hpp src/map_data.cc include/map_data.hpp
 	$(CC) $(CXXFLAGS) $(INCLUDE_DIRS) -c src/earcut.cc -o obj/earcut.o
 
 obj/tinyxml2.o: src/tinyxml2.cpp

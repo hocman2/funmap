@@ -1,3 +1,5 @@
+#include "worker_map_build.hpp"
+
 #include <cassert>
 #include <ranges>
 #include <thread>
@@ -5,13 +7,12 @@
 #include <condition_variable>
 #include <vector>
 #include <print>
-#include <future>
+#include <queue>
 #include <optional>
 #include <tuple>
 #include "raylib.h"
 #include "map_data.hpp"
 #include "earcut.hpp"
-#include "worker_map_build.hpp"
 
 using namespace std;
 namespace views = ranges::views;
@@ -37,8 +38,20 @@ void WorkerMapBuild::idle_job() {
 }
 
 void WorkerMapBuild::start_job(JobParams&& params) {
+  if (m.job_params.has_value()) {
+    TraceLog(LOG_WARNING, "WORKER [MAP BUILD] Job ignored, there is already one running");
+    return;
+  }
   m.job_params = std::make_optional(std::move(params));
+  m.results_queue = {};
   m.job_cond.notify_one();
+}
+
+queue<WorkerMapBuild::ExpectedJobResult> WorkerMapBuild::take_results() {
+  // this seems to be sub optimized, there has got to be a better way
+  auto moved = std::move(m.results_queue);
+  m.results_queue = {};
+  return moved;
 }
 
 void WorkerMapBuild::end() {
@@ -52,57 +65,51 @@ void WorkerMapBuild::end() {
 
 void WorkerMapBuild::job() {
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Job started");
-  size_t num_chunks = m.job_params->chunks.size();
-  vector<ExpectedJobResult> job_results;
-  job_results.reserve(num_chunks);
-  // it has to be initialized i guess
-  for (size_t i = 0; i < num_chunks; ++i) 
-    job_results.push_back(JobResult {});
+  for (auto& chunk : m.job_params->chunks) 
+    chunk->status(ChunkStatus::Generating);
 
+  // this has to be done as a first step, ideally we'd have a "network worker"
+  // doing that and sending the results as they come so we can start parsing
+  // without having to wait for every results
   vector<HttpResponse> responses = fetch_map_data(m.job_params->chunks);
 
   // read responses for potential errors
-  for (size_t i = 0; i < responses.size(); ++i) {
-    const HttpResponse& r = responses[i];
+  for (HttpResponse& r : responses) {
     // not very explicit, means curl failed, not the requests themselves
     // could also use some error code
     if (r.status_code == -1) {
       TraceLog(LOG_ERROR, "WORKER: [MAP BUILD] Job failed, fatal error occured");
-      m.job_params->promise.set_value(vector<ExpectedJobResult> { unexpected(ErrorInternal{}) });
+      m.results_queue.push({ r.target, unexpected(ErrorInternal{}) });
+      for (auto& chunk : m.job_params->chunks) 
+        chunk->status(ChunkStatus::Invalid);
+      // we can end the job early
+      end();
       return;
     }
 
     if (r.status_code >= 400) {
-      job_results[i] = unexpected(ErrorHttp {r.status_code, r.data}); 
+      r.target->status(ChunkStatus::Invalid);
+      m.results_queue.push({ r.target, unexpected(ErrorHttp {r.status_code, r.data}) }); 
+      continue;
     }
-  }
 
-  const auto xml_resps = responses | views::transform([](const HttpResponse& r) -> optional<string_view> { 
-    if (r.status_code >= 400) {
-      return nullopt;
-    } else {
-      return string_view(r.data);
-    }
-  });
-  vector<MapData> mds = parse_map_data(xml_resps);
-
-  for (size_t i = 0; i < mds.size(); ++i) {
-    if (!job_results[i].has_value()) continue; // maybe already holds an http error
-
-    // because it might not be immediatly clear,
-    // this expression selects buildings, earcuts each one into a list of triangles
-    // then meshes are generated from these triangles
-    MapData& md = mds[i];
-    job_results[i]->meshes = [&md]() {
+    const auto xml_resp = string_view(r.data);
+    MapData md = parse_map_data(xml_resp);
+    JobResult res;
+    res.meshes = ([&md](){ 
       auto buildings = md.ways | views::filter([](const Way& w){ return w.is_building(); });
       vector<EarcutResult> earcuts = earcut_collection(std::move(buildings));
       return build_meshes(earcuts);
-    }();
+    })();
 
-    auto roads_view = md.ways | views::filter([](const Way& w) { return w.is_highway(); });
-    job_results[i]->roads = vector<Way>(roads_view.begin(), roads_view.end());
+    auto roads_view = md.ways 
+                | views::filter([](const Way& w){ return w.is_highway(); })
+                | views::transform([](const Way& w){ return make_unique<Way>(w); });
+
+    res.roads = vector<unique_ptr<Way>>(roads_view.begin(), roads_view.end());
+
+    m.results_queue.push({r.target, std::move(res)});
   }
 
-  m.job_params->promise.set_value(job_results);
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Job finished");
 }

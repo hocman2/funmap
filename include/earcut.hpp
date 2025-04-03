@@ -1,20 +1,11 @@
 #pragma once
-#include "raylib.h"
-#include "map_data.hpp"
 #include <ranges>
 #include <vector>
 #include <tuple>
-
-using Triangle = std::tuple<Vector3, Vector3, Vector3>;
-struct EarcutResult {
-  std::vector<Triangle> triangles;
-  Vector2 world_offset;
-};
-
-struct EarcutMesh {
-  Mesh mesh;
-  Vector2 world_offset;
-};
+#include <memory>
+#include "raylib.h"
+#include "types/earcut.hpp"
+#include "types/map_data.hpp"
 
 EarcutResult earcut_single(const Way& w);
 
@@ -32,4 +23,4 @@ std::vector<EarcutResult> earcut_collection(WayFilterView<Pred>&& buildings) {
   return earcuts;
 }
 
-std::vector<EarcutMesh> build_meshes(const std::vector<EarcutResult>& earcuts);
+std::vector<std::unique_ptr<EarcutMesh>> build_meshes(const std::vector<EarcutResult>& earcuts);
