@@ -44,8 +44,8 @@ public:
   ~WorkerMapBuild();
   void start_idling();
   void start_job(JobParams&& params);
-  bool has_job() const { return m.job_params.has_value(); }
-  bool has_results() const { return !m.results_queue.empty(); }
+  bool has_job() const { std::lock_guard lock(m_mtx); return m.job_params.has_value(); }
+  bool has_results() const { std::lock_guard lock(m_mtx); return !m.results_queue.empty(); }
   std::queue<ExpectedJobResult> take_results();
   void end();
 private:
@@ -58,9 +58,10 @@ private:
 
     // Parallel computing stuff
     std::thread thr = {};
-    std::mutex mutex = {};
     std::condition_variable job_cond = {};
   } m;
+
+  mutable std::mutex m_mtx = {};
 private:
   void idle_job();
   void job();

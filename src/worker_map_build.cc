@@ -18,7 +18,11 @@ using namespace std;
 namespace views = ranges::views;
 
 WorkerMapBuild::~WorkerMapBuild() {
-  end();
+  if (m.thr.joinable()) {
+    end();
+    m.thr.join();
+  }
+  TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Exitted successfully");
 }
 
 void WorkerMapBuild::start_idling() {
@@ -29,7 +33,7 @@ void WorkerMapBuild::start_idling() {
 void WorkerMapBuild::idle_job() {
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Started, waiting for job start");
   while (true) {
-    unique_lock lock(m.mutex);   
+    unique_lock lock(m_mtx);   
     m.job_cond.wait(lock, [this]() { return m.job_params.has_value() || m.should_stop; });
     if (m.should_stop) return;
     job();
@@ -38,6 +42,7 @@ void WorkerMapBuild::idle_job() {
 }
 
 void WorkerMapBuild::start_job(JobParams&& params) {
+  lock_guard lock(m_mtx);
   if (m.job_params.has_value()) {
     TraceLog(LOG_WARNING, "WORKER [MAP BUILD] Job ignored, there is already one running");
     return;
@@ -48,6 +53,7 @@ void WorkerMapBuild::start_job(JobParams&& params) {
 }
 
 queue<WorkerMapBuild::ExpectedJobResult> WorkerMapBuild::take_results() {
+  lock_guard lock(m_mtx);
   // this seems to be sub optimized, there has got to be a better way
   auto moved = std::move(m.results_queue);
   m.results_queue = {};
@@ -55,23 +61,31 @@ queue<WorkerMapBuild::ExpectedJobResult> WorkerMapBuild::take_results() {
 }
 
 void WorkerMapBuild::end() {
-  m.should_stop = true;
-  m.job_cond.notify_one();
-  if (m.thr.joinable()) {
-    m.thr.join();
+  {
+    lock_guard lock(m_mtx);
+    m.should_stop = true;
   }
-  TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Exited successfully");
+
+  m.job_cond.notify_one();
+  TraceLog(LOG_INFO, "WORKER: [MAP BUILD] End notification sent");
 }
 
 void WorkerMapBuild::job() {
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Job started");
-  for (auto& chunk : m.job_params->chunks) 
+
+  vector<shared_ptr<Chunk>> chunks;
+  {
+    lock_guard l(m_mtx); 
+    chunks = m.job_params->chunks;
+  }
+
+  for (auto& chunk : chunks) 
     chunk->status(ChunkStatus::Generating);
 
   // this has to be done as a first step, ideally we'd have a "network worker"
   // doing that and sending the results as they come so we can start parsing
   // without having to wait for every results
-  vector<HttpResponse> responses = fetch_map_data(m.job_params->chunks);
+  vector<HttpResponse> responses = fetch_map_data(chunks);
 
   // read responses for potential errors
   for (HttpResponse& r : responses) {
@@ -79,8 +93,12 @@ void WorkerMapBuild::job() {
     // could also use some error code
     if (r.status_code == -1) {
       TraceLog(LOG_ERROR, "WORKER: [MAP BUILD] Job failed, fatal error occured");
-      m.results_queue.push({ r.target, unexpected(ErrorInternal{}) });
-      for (auto& chunk : m.job_params->chunks) 
+      {
+        lock_guard l(m_mtx);
+        m.results_queue.push({ r.target, unexpected(ErrorInternal{}) });
+      }
+
+      for (auto& chunk : chunks) 
         chunk->status(ChunkStatus::Invalid);
       // we can end the job early
       end();
@@ -89,7 +107,10 @@ void WorkerMapBuild::job() {
 
     if (r.status_code >= 400) {
       r.target->status(ChunkStatus::Invalid);
-      m.results_queue.push({ r.target, unexpected(ErrorHttp {r.status_code, r.data}) }); 
+      {
+        lock_guard l(m_mtx);
+        m.results_queue.push({ r.target, unexpected(ErrorHttp {r.status_code, r.data}) }); 
+      }
       continue;
     }
 
@@ -108,7 +129,10 @@ void WorkerMapBuild::job() {
 
     res.roads = vector<unique_ptr<Way>>(roads_view.begin(), roads_view.end());
 
-    m.results_queue.push({r.target, std::move(res)});
+    {
+      lock_guard l(m_mtx);
+      m.results_queue.push({r.target, std::move(res)});
+    }
   }
 
   TraceLog(LOG_INFO, "WORKER: [MAP BUILD] Job finished");
