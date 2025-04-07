@@ -36,7 +36,14 @@ void WorkerMapBuild::idle_job() {
     unique_lock lock(m_mtx);   
     m.job_cond.wait(lock, [this]() { return m.job_params.has_value() || m.should_stop; });
     if (m.should_stop) return;
-    job();
+
+    // leave data access open for the job duration
+    // The job will lock when it needs but getters
+    // must remain accessible
+    lock.unlock();
+      job();
+    lock.lock();
+
     m.job_params = std::nullopt;
   }
 }
