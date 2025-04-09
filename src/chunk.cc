@@ -5,8 +5,6 @@
 #include "rlgl.h"
 #include <array>
 #include <vector>
-#include <mutex>
-#include <memory>
 
 using namespace std;
 
@@ -16,27 +14,24 @@ Chunk::Chunk(double longA, double latA, double longB, double latB):
   m()
 {}
 
-void Chunk::upload_meshes(vector<unique_ptr<EarcutMesh>>&& in_meshes) {
-  const lock_guard<mutex> lock(m_mtx);
+void Chunk::upload_meshes(vector<EarcutMesh>&& in_meshes) {
   m.meshes = std::move(in_meshes);
 
-  for (unique_ptr<EarcutMesh>& mesh : m.meshes) {
-    UploadMesh(&(mesh->mesh), false);
+  for (EarcutMesh& mesh : m.meshes) {
+    UploadMesh(&(mesh.mesh), false);
   }
 }
 
-void Chunk::upload_roads(vector<unique_ptr<Way>>&& in_roads) {
-  const lock_guard<mutex> lock(m_mtx);
+void Chunk::upload_roads(vector<Way>&& in_roads) {
   m.roads = std::move(in_roads);
 }
 
 void Chunk::unload() {
-  const lock_guard<mutex> lock(m_mtx);
-  for (unique_ptr<EarcutMesh>& mesh : m.meshes) 
-    UnloadMesh(mesh->mesh);
+  for (EarcutMesh& mesh : m.meshes) 
+    UnloadMesh(mesh.mesh);
   m.meshes.clear();
   m.roads.clear();
-  m.status = ChunkStatus::Pending;
+  status = ChunkStatus::Pending;
 }
 
 array<shared_ptr<Chunk>, 8> Chunk::generate_adjacents() const {

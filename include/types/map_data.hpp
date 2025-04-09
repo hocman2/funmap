@@ -48,9 +48,3 @@ struct MapData {
   static std::unordered_set<std::string> tag_keys;
   static std::unordered_set<std::string> tag_values;
 };
-
-struct HttpResponse {
-  std::shared_ptr<class Chunk> target;
-  long status_code;
-  std::string data;
-};

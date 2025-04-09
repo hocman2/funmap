@@ -23,4 +23,4 @@ std::vector<EarcutResult> earcut_collection(WayFilterView<Pred>&& buildings) {
   return earcuts;
 }
 
-std::vector<std::unique_ptr<EarcutMesh>> build_meshes(const std::vector<EarcutResult>& earcuts);
+std::vector<EarcutMesh> build_meshes(const std::vector<EarcutResult>& earcuts);

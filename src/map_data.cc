@@ -19,7 +19,11 @@ unordered_set<string> MapData::tag_keys;
 unordered_set<string> MapData::tag_values;
 
 Tag Tag::make_valueless(const char* key) noexcept { 
-  // this shit will break if tag_keys isn't found !! idc this whole function is trash anyway !
+  // trash workaround
+  if (!MapData::tag_keys.contains(key)) {
+    MapData::tag_keys.insert(key);
+  }
+
   return {
     .key = std::string_view(*(MapData::tag_keys.find(key))), 
     .value = std::string_view("")
@@ -72,95 +76,15 @@ pair<double, double> toMapCoords(Vector2 v) {
   );
 }
 
-static size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
-  (void)size;
-
-  *((string*)userdata) += string(ptr, nmemb); 
-  return nmemb;
-}
-
-vector<HttpResponse> fetch_map_data(const vector<shared_ptr<Chunk>>& chunks) {
-  // two mapped arrays, easy_handles[i] => responses[i]
-  vector<CURL*> easy_handles;
-  vector<HttpResponse> responses;
-  responses.reserve(chunks.size());
-  easy_handles.reserve(chunks.size());
-
-  CURLM* curlm = curl_multi_init();
-
-  for (size_t i = 0; i < chunks.size(); ++i) {
-    if (!chunks[i]) assert(false); // wtf man
-
-    double longA = chunks[i]->min_lon; 
-    double latA = chunks[i]->min_lat; 
-    double longB = chunks[i]->max_lon; 
-    double latB = chunks[i]->max_lat; 
-
-    CURL* curl = curl_easy_init();
-
-    easy_handles.push_back(curl);
-    responses.push_back(HttpResponse {chunks[i], 0, string{}});
-
-    curl_easy_setopt(curl, CURLOPT_URL, format("https://www.openstreetmap.org/api/0.6/map?bbox={},{},{},{}", longA, latA, longB, latB).c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &(responses[i].data));
-
-    curl_multi_add_handle(curlm, curl);
-  }
-
-  int still_running = 1;
-  while(still_running) {
-    // update number of running tasks
-    CURLMcode mc = curl_multi_perform(curlm, &still_running);
-    // fatal error, stop everything and return invalid data
-    if (mc) {
-      for(HttpResponse& resp : responses) {
-        resp.status_code = -1;
-      }
-      break;
-    }
-
-    // poll so the cpu does not explode
-    if (still_running) {
-      mc = curl_multi_poll(curlm, NULL, 0, 1000, NULL); 
-    }
-
-    // read msgs of finished taks
-    CURLMsg* msg;
-    int _queued;
-    do {
-      msg = curl_multi_info_read(curlm, &_queued);
-      if (!msg || msg->msg != CURLMSG_DONE) continue;
-
-      // find which handle is done
-      size_t handle_idx = 0;
-      for (size_t i = 0; i < easy_handles.size(); ++i) {
-        if (msg->easy_handle == easy_handles[i]) {
-          handle_idx = i;
-          break;
-        }
-      }
-
-      // write the response code and kick that guy out
-      long* status_code = &(responses[handle_idx].status_code);
-      curl_easy_getinfo(msg->easy_handle, CURLINFO_RESPONSE_CODE, status_code);
-      curl_multi_remove_handle(curlm, msg->easy_handle);
-      curl_easy_cleanup(msg->easy_handle);
-      easy_handles[handle_idx] = nullptr;
-
-    } while(msg);
-  }
-
-  curl_multi_cleanup(curlm);
-
-  return responses;
-}
-
-MapData parse_map_data(string_view response) {
+optional<MapData> parse_map_data(string_view response) {
   MapData md = MapData {};
 
   XMLDocument doc;
-  doc.Parse(response.data());
+  XMLError parse_res = doc.Parse(response.data());
+  if (parse_res != XML_SUCCESS) {
+    TraceLog(LOG_ERROR, "XML: Parse error: %s", doc.ErrorStr());
+    return std::nullopt;
+  }
   XMLNode* lastChild = doc.RootElement()->LastChildElement();
 
   for (XMLElement* elem = doc.RootElement()->FirstChildElement(); elem != lastChild; elem = elem->NextSiblingElement()) {
