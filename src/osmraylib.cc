@@ -23,6 +23,7 @@ const double LONG_A = 2.25797;
 const double LAT_A  = 48.61416;
 const double LONG_B = 2.26037;
 const double LAT_B  = 48.61511;
+shared_ptr<Chunk> start_chunk;
 vector<shared_ptr<Chunk>> chunks;
 
 Material initialize_mat() {
@@ -105,19 +106,34 @@ int main() {
 
   Material mat = initialize_mat();
   MapBuildJob build_job {};
-  chunks.push_back(make_shared<Chunk>(longA, latA, longB, latB));
-  auto adjacents = chunks[0]->generate_adjacents();
-  chunks.insert(chunks.end(), adjacents.begin(), adjacents.end());
+  bool unload_chunks_next_press = false;
+  start_chunk = make_shared<Chunk>(longA, latA, longB, latB);
+  chunks.push_back(start_chunk);
 
   while(!WindowShouldClose()) {
     UpdateCamera(&camera, CAMERA_FREE);
 
     poll_build_job_results(build_job);
-    if (build_job.finished()) {
+    if (build_job.just_finished()) {
+      if (chunks.size() == 1) {
+        auto adjacents = start_chunk->generate_adjacents();
+        chunks.insert(chunks.end(), adjacents.begin(), adjacents.end());
+      } else if (chunks.size() > 1) {
+        unload_chunks_next_press = true;
+      }
     }
     
     if (IsKeyPressed(KEY_R)) {
-      build_job.start(chunks);
+      if (unload_chunks_next_press) {
+        unload_chunks_next_press = false;
+        for (auto& c : chunks)
+          c->unload();
+
+        chunks.clear();
+        chunks.push_back(start_chunk);
+      } else if (!build_job.ongoing()){
+        build_job.start(chunks);
+      }
     }
 
     float cameraPos[3] = {camera.position.x, camera.position.y, camera.position.z};

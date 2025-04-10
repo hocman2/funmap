@@ -6,6 +6,8 @@
 #include <format>
 #include <string>
 #include <string_view>
+#include <algorithm>
+#include <ranges>
 #include <expected>
 #include <optional>
 #include "curl/curl.h"
@@ -16,6 +18,8 @@ using namespace std;
 using ExpectedJobResult = MapBuildJob::ExpectedJobResult;
 using JobResult = MapBuildJob::JobResult;
 using JobError = MapBuildJob::JobError;
+
+namespace views = ranges::views;
 
 MapBuildJob::MapBuildJob(): 
   m {}
@@ -29,16 +33,19 @@ MapBuildJob::~MapBuildJob() {
 
 static size_t curl_wrcb(char* ptr, size_t size, size_t nmemb, void* ud) {
   (void)size;
-  *((string*)ud) += string(ptr, nmemb);
+  string& udstr = *(static_cast<string*>(ud));
+  udstr = udstr + string(ptr, nmemb);
   return nmemb;
 }
 
 void MapBuildJob::start(const vector<shared_ptr<Chunk>>& chunks) {
   if (chunks.size() == 0) {
     m.state = State::Finished;
+    m.just_finished = true;
     return;
   }
 
+  m.just_finished = false;
   m.state = State::Working;
   m.ongoing.clear();
   m.ongoing.reserve(chunks.size());
@@ -82,6 +89,10 @@ expected<JobResult, JobError> MapBuildJob::try_build_job_result(OngoingJob& ongo
 }
 
 queue<ExpectedJobResult> MapBuildJob::poll() {
+  if (m.just_finished) {
+    m.just_finished = false;
+  }
+
   if (m.state == State::Finished || m.state == State::AwaitingStart) return {};
   curl_multi_poll(m.curlm, NULL, 0, 0, NULL);
 
@@ -97,14 +108,13 @@ queue<ExpectedJobResult> MapBuildJob::poll() {
   queue<ExpectedJobResult> results {};
 
   CURLMsg* msg;
-  while (msg = curl_multi_info_read(m.curlm, &running_handles), msg) {
+  int num_msgs;
+  while (msg = curl_multi_info_read(m.curlm, &num_msgs), msg) {
     switch(msg->msg) {
       case CURLMSG_DONE: {
-          auto ongoing_job = ranges::find_if(m.ongoing.begin(), m.ongoing.end(),
-            [&](const auto& job){ 
-              return job.curl == msg->easy_handle; 
-            }
-          );
+          auto ongoing_job = ranges::find_if(m.ongoing, [&](const auto& j){ 
+            return j.curl == msg->easy_handle; 
+          });
           assert(ongoing_job != m.ongoing.end() && "No ongoing job found for a request. FATAL ERROR");
 
           long code;
@@ -124,14 +134,20 @@ queue<ExpectedJobResult> MapBuildJob::poll() {
             });  
           }
           
-          m.ongoing.erase(ongoing_job);
           curl_multi_remove_handle(m.curlm, ongoing_job->curl);
           curl_easy_cleanup(ongoing_job->curl);
+          ongoing_job->done = true;
         }
         break;
       default:
         break;
     } 
   } 
+
+  if (running_handles == 0) {
+    m.ongoing.clear();
+    m.just_finished = true;
+  }
+
   return results;
 }
